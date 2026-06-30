@@ -2,7 +2,7 @@
     "name": "square1/laravel-mpp",
     "description": "Charge AI agents per request from any Laravel route using the Machine Payments Protocol (MPP), settling over Stripe Shared Payment Tokens or Tempo on-chain stablecoins. Tag routes via middleware or a #[RequiresPayment] attribute.",
     "type": "library",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "keywords": [
         "square1",
         "laravel-mpp",

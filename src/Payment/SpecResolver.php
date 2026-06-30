@@ -34,6 +34,8 @@ class SpecResolver
                 isset($options['methods'])
                     ? array_values(array_filter(array_map('trim', explode('|', $options['methods']))))
                     : (isset($entry['methods']) ? (array) $entry['methods'] : null),
+                $this->parsePreconditions($options)
+                    ?: (isset($entry['preconditions']) ? (array) $entry['preconditions'] : []),
             );
         }
 
@@ -71,6 +73,7 @@ class SpecResolver
             $options['method'] ?? null,
             $request,
             $methods,
+            $this->parsePreconditions($options),
         );
     }
 
@@ -93,13 +96,15 @@ class SpecResolver
             $attribute->method,
             $request,
             $attribute->methods,
+            $attribute->preconditions,
         );
     }
 
     /**
      * @param  list<string>|null  $methods  explicit per-route ordered method set, or null to use config defaults
+     * @param  list<string>  $preconditions  named precondition checks to run for this route (in order)
      */
-    private function build(string $amount, string $currency, int $grants, ?string $scope, ?string $method, Request $request, ?array $methods = null): PaymentSpec
+    private function build(string $amount, string $currency, int $grants, ?string $scope, ?string $method, Request $request, ?array $methods = null, array $preconditions = []): PaymentSpec
     {
         $offered = $this->resolveOfferedMethods($method, $methods);
         $primary = $offered[0];
@@ -114,6 +119,7 @@ class SpecResolver
             networkId: $methodConfig['network_id'] ?? null,
             paymentMethodTypes: $methodConfig['payment_method_types'] ?? ['card'],
             offeredMethods: $offered,
+            preconditions: $preconditions,
         );
     }
 
@@ -184,6 +190,22 @@ class SpecResolver
         }
 
         return $offered;
+    }
+
+    /**
+     * Parse the per-route `preconditions=a|b` option into an ordered list of
+     * named checks (pipe-separated, like `methods=`). Empty when unset.
+     *
+     * @param  array<string, string>  $options
+     * @return list<string>
+     */
+    private function parsePreconditions(array $options): array
+    {
+        if (! isset($options['preconditions']) || $options['preconditions'] === '') {
+            return [];
+        }
+
+        return array_values(array_filter(array_map('trim', explode('|', $options['preconditions']))));
     }
 
     /**

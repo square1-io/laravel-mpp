@@ -34,6 +34,8 @@ final class RequiresPayment
 {
     /**
      * @param  list<string>|null  $methods  ordered set of offered settlement methods (primary first)
+     * @param  list<string>  $preconditions  named precondition checks for this route, run (after any
+     *                                       global ones) before a challenge is minted or settled
      */
     public function __construct(
         public readonly string|float|null $amount = null,
@@ -42,5 +44,6 @@ final class RequiresPayment
         public readonly ?string $scope = null,
         public readonly ?string $method = null,
         public readonly ?array $methods = null,
+        public readonly array $preconditions = [],
     ) {}
 }

@@ -6,6 +6,8 @@ use Illuminate\Support\Facades\Route;
 use Orchestra\Testbench\TestCase as OrchestraTestCase;
 use Square1\Mpp\Http\Middleware\EnforcePaymentAttributes;
 use Square1\Mpp\MppServiceProvider;
+use Square1\Mpp\Tests\Fakes\AllowPrecondition;
+use Square1\Mpp\Tests\Fakes\DenyPrecondition;
 use Square1\Mpp\Tests\Fakes\FakeTempoVerifier;
 use Square1\Mpp\Tests\Fakes\FakeVerifier;
 use Square1\Mpp\Tests\Fakes\PaidController;
@@ -44,6 +46,13 @@ abstract class TestCase extends OrchestraTestCase
             'poll_attempts' => 1,
             'poll_delay_ms' => 0,
         ]);
+
+        // Named precondition checks for the precondition tests. `global` stays
+        // empty by default; tests set it per-case.
+        $app['config']->set('mpp.preconditions.checks', [
+            'allow' => [AllowPrecondition::class, 'check'],
+            'deny' => [DenyPrecondition::class, 'check'],
+        ]);
     }
 
     protected function defineRoutes($router): void
@@ -61,6 +70,16 @@ abstract class TestCase extends OrchestraTestCase
         // maps to 10000 pathUSD minor units at 6 decimals.
         Route::get('/tempo', fn () => response('TEMPO', 200))
             ->middleware('mpp:0.01,USD,method=tempo,scope=tempo.clip');
+
+        // Precondition routes (checks registered in defineEnvironment).
+        Route::get('/precond/open', fn () => response('OPEN', 200))
+            ->middleware('mpp:0.50,USD,scope=precond.open');
+        Route::get('/precond/allow', fn () => response('OK', 200))
+            ->middleware('mpp:0.50,USD,scope=precond.allow,preconditions=allow');
+        Route::get('/precond/deny', fn () => response('OK', 200))
+            ->middleware('mpp:0.50,USD,scope=precond.deny,preconditions=deny');
+        Route::get('/precond/unknown', fn () => response('OK', 200))
+            ->middleware('mpp:0.50,USD,scope=precond.unknown,preconditions=ghost');
 
         // Attribute via explicit `mpp` middleware (no args).
         Route::get('/attr/explicit', [PaidController::class, 'clip'])->middleware('mpp');

@@ -20,6 +20,7 @@ final class PaymentSpec
     /**
      * @param  list<string>  $paymentMethodTypes  the PRIMARY method's payment method types
      * @param  list<string>  $offeredMethods  ordered set of offered method names (primary first)
+     * @param  list<string>  $preconditions  named precondition checks to run before a challenge is minted or settled
      */
     public function __construct(
         public readonly string $amount,
@@ -30,6 +31,7 @@ final class PaymentSpec
         public readonly ?string $networkId = null,
         public readonly array $paymentMethodTypes = ['card'],
         public readonly array $offeredMethods = [],
+        public readonly array $preconditions = [],
     ) {}
 
     public function isMetered(): bool

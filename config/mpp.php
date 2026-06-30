@@ -234,4 +234,34 @@ return [
     'price_book' => [
         // 'report.basic' => ['amount' => '0.50', 'currency' => 'USD', 'grants' => 10],
     ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Preconditions
+    |--------------------------------------------------------------------------
+    |
+    | Named checks that run BEFORE a 402 is minted or a payment settled, so a
+    | request that can never be fulfilled (a missing resource, a blocked user)
+    | is rejected without charging. Each check is a [Class::class, 'method'] pair
+    | (resolved via the container, so config:cache-safe) called with the Request
+    | and the resolved PaymentSpec; it returns a Response to reject (e.g. a 404)
+    | or null to proceed.
+    |
+    | `global` checks run on every gated route. A route adds its own, additively,
+    | with `preconditions=` on the middleware (`mpp:1.00,USD,preconditions=postexists`)
+    | or `preconditions: [...]` on the attribute. Globals run first, then the
+    | route's own, in order and de-duplicated; the first Response wins. An unknown
+    | name throws, so a typo can never silently skip a check.
+    |
+    */
+    'preconditions' => [
+        'checks' => [
+            // 'postexists'     => [\App\Mpp\Checks\PostExists::class, 'check'],
+            // 'usernotblocked' => [\App\Mpp\Checks\UserNotBlocked::class, 'check'],
+        ],
+
+        'global' => [
+            // 'usernotblocked',
+        ],
+    ],
 ];

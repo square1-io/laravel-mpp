@@ -205,3 +205,27 @@ it('resolves offered methods from a RequiresPayment attribute', function () {
 
     expect($spec->offeredMethods)->toBe(['stripe', 'tempo']);
 });
+
+it('parses a per-route preconditions= list, ordered', function () {
+    $spec = $this->resolver->fromMiddlewareArgs(
+        ['0.50', 'USD', 'preconditions=postexists|usercheck'],
+        Request::create('/clip')
+    );
+
+    expect($spec->preconditions)->toBe(['postexists', 'usercheck']);
+});
+
+it('defaults preconditions to an empty list when none are given', function () {
+    $spec = $this->resolver->fromMiddlewareArgs(['0.50', 'USD'], Request::create('/clip'));
+
+    expect($spec->preconditions)->toBe([]);
+});
+
+it('reads preconditions from a RequiresPayment attribute', function () {
+    $spec = $this->resolver->fromAttribute(
+        new RequiresPayment(amount: '0.50', preconditions: ['postexists']),
+        Request::create('/clip')
+    );
+
+    expect($spec->preconditions)->toBe(['postexists']);
+});

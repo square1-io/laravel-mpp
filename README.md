@@ -38,6 +38,7 @@ public function report()
 - [Choose a Payment Rail](#choose-a-payment-rail)
 - [Protecting Routes](#protecting-routes)
 - [Metered Access](#metered-access)
+- [Preconditions](#preconditions)
 - [Session Storage](#session-storage)
 - [Configuration](#configuration)
 - [Testing](#testing)
@@ -467,6 +468,60 @@ Each successful request decrements the balance and returns the updated `Payment-
 Session spends are scope-checked and atomic. Concurrent requests cannot spend more credits than the session was granted.
 
 Metering works the same on both rails. A Tempo payment for a metered route also issues a session, reused with the same `Authorization: Payment ..., session="sess_..."` header shown above.
+
+## Preconditions
+
+The payment gate runs before your controller. On a paid retry it settles the payment and then calls the controller, so a 404 raised inside the controller comes after the buyer has already paid. And the first, unpaid request to a missing resource returns a `402`, which tells an agent to pay for something that does not exist.
+
+Preconditions close that gap. A precondition is a named check that runs before a `402` is minted or a payment settled. It returns a response to reject the request (a `404` for a missing resource, a `403` for a blocked user) or null to let the request proceed to the gate. Anything that decides whether a request can ever be fulfilled belongs here, not in the controller.
+
+Define checks once in config, then attach them where they apply. Each check is a `[Class::class, 'method']` pair, resolved through the container (so it stays `config:cache`-safe), called with the request and the resolved `PaymentSpec`:
+
+```php
+// config/mpp.php
+'preconditions' => [
+    'checks' => [
+        'postexists'     => [\App\Mpp\Checks\PostExists::class, 'check'],
+        'usernotblocked' => [\App\Mpp\Checks\UserNotBlocked::class, 'check'],
+    ],
+
+    // Run on every gated route, before any route-specific checks.
+    'global' => ['usernotblocked'],
+],
+```
+
+```php
+namespace App\Mpp\Checks;
+
+use App\Models\Post;
+use Illuminate\Http\Request;
+use Square1\Mpp\Payment\PaymentSpec;
+use Symfony\Component\HttpFoundation\Response;
+
+class PostExists
+{
+    public function check(Request $request, PaymentSpec $spec): ?Response
+    {
+        return Post::find($request->route('post'))
+            ? null
+            : response()->json(['error' => 'No such post.'], 404);
+    }
+}
+```
+
+Attach route-specific checks the same way as other arguments, pipe-separated and ordered, on the middleware or the attribute:
+
+```php
+Route::get('/posts/{post}', ShowPost::class)
+    ->middleware('mpp:1.00,USD,scope=post.view,preconditions=postexists');
+
+#[RequiresPayment(amount: '1.00', scope: 'post.view', preconditions: ['postexists'])]
+public function show() { /* ... */ }
+```
+
+Checks are additive and composed in order: the `global` checks run first, then the route's own, de-duplicated. The first check that returns a response wins, and the rest do not run, so a global `usernotblocked` short-circuits before a route's `postexists` ever fires. A name that is not defined in `checks` throws `InvalidConfigurationException`, so a typo fails closed rather than silently skipping a check.
+
+If a request can only be judged after settlement, you have to refund instead, which is worse for the buyer and rail-specific. Prefer a precondition wherever existence or eligibility can be determined up front.
 
 ## Session Storage
 
