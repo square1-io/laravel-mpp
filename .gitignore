@@ -1,0 +1,10 @@
+/vendor/
+/node_modules/
+composer.phar
+.phpunit.cache/
+.phpunit.result.cache
+.php-cs-fixer.cache
+.DS_Store
+.env
+.stripe-test.env
+/build/

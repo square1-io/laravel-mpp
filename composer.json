@@ -1,0 +1,69 @@
+{
+    "name": "square1/laravel-mpp",
+    "description": "Charge AI agents per request from any Laravel route using the Machine Payments Protocol (MPP), settling over Stripe Shared Payment Tokens or Tempo on-chain stablecoins. Tag routes via middleware or a #[RequiresPayment] attribute.",
+    "type": "library",
+    "version": "1.0.0",
+    "keywords": [
+        "square1",
+        "laravel-mpp",
+        "mpp",
+        "machine-payments-protocol",
+        "agentic-commerce",
+        "stripe",
+        "shared-payment-token",
+        "tempo",
+        "stablecoin",
+        "402",
+        "api"
+    ],
+    "license": "MIT",
+    "homepage": "https://github.com/square1-io/laravel-mpp",
+    "authors": [
+        {
+            "name": "Paul Conroy",
+            "email": "paul@square1.io"
+        }
+    ],
+    "require": {
+        "php": "^8.4",
+        "illuminate/support": "^12.0|^13.0",
+        "stripe/stripe-php": ">=16.0 <21.0"
+    },
+    "require-dev": {
+        "laravel/framework": "^12.0|^13.0",
+        "laravel/pint": "^1.14",
+        "orchestra/testbench": "^9.0|^10.0|^11.0",
+        "pestphp/pest": "^4.0",
+        "phpunit/phpunit": "^12.5"
+    },
+    "autoload": {
+        "psr-4": {
+            "Square1\\Mpp\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Square1\\Mpp\\Tests\\": "tests/"
+        }
+    },
+    "scripts": {
+        "test": "vendor/bin/pest",
+        "lint": "vendor/bin/pint --test",
+        "format": "vendor/bin/pint"
+    },
+    "config": {
+        "sort-packages": true,
+        "allow-plugins": {
+            "pestphp/pest-plugin": true
+        }
+    },
+    "minimum-stability": "stable",
+    "prefer-stable": true,
+    "extra": {
+        "laravel": {
+            "providers": [
+                "Square1\\Mpp\\MppServiceProvider"
+            ]
+        }
+    }
+}

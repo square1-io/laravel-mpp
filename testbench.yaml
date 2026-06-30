@@ -1,0 +1,22 @@
+providers:
+  - Square1\Mpp\MppServiceProvider
+
+env:
+  - MPP_CHALLENGE_SECRET="e2e-tempo-demo-secret-not-for-production"
+  - CACHE_STORE=file
+  - TEMPO_RPC_URL=https://rpc.moderato.tempo.xyz
+  - TEMPO_CHAIN_ID=42431
+  - TEMPO_TOKEN=0x20c0000000000000000000000000000000000000
+  - TEMPO_DECIMALS=6
+  - TEMPO_RECIPIENT=0x0dcd39A3F85aa288C1B2825bc41EB7e9BB2ABF70
+  - TEMPO_MIN_CONFIRMATIONS=1
+  - TEMPO_REALM=localhost
+  - TEMPO_POLL_ATTEMPTS=60
+  - TEMPO_POLL_DELAY_MS=1000
+  - MPP_DEFAULT_METHOD=tempo
+
+workbench:
+  start: '/paid'
+  install: true
+  discovers:
+    web: true
