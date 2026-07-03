@@ -4,7 +4,7 @@
 
 Charge AI agents for access to Laravel routes with the [Machine Payments Protocol (MPP)](https://mpp.dev).
 
-`square1-io/laravel-mpp` returns a `402 Payment Required` challenge for protected routes. A capable agent pays the challenge, retries the request, and receives the response with a payment receipt. You choose the price per route, or issue a metered session where one payment grants multiple accesses.
+`square1/laravel-mpp` returns a `402 Payment Required` challenge for protected routes. A capable agent pays the challenge, retries the request, and receives the response with a payment receipt. You choose the price per route, or issue a metered session where one payment grants multiple accesses.
 
 The package includes two payment rails:
 
@@ -50,7 +50,7 @@ public function report()
 Requires PHP 8.4 and Laravel 12 or 13.
 
 ```bash
-composer require square1-io/laravel-mpp
+composer require square1/laravel-mpp
 ```
 
 Publish the config:
