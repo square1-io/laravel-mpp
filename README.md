@@ -30,6 +30,8 @@ public function report()
 }
 ```
 
+For a real-world demo, see [PayForGoals.com](https://www.payforgoals.com).
+
 ## Contents
 
 - [Readiness](#readiness)
