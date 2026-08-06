@@ -575,7 +575,7 @@ So if a metered route's price varies, vary its `scope` too:
 'partner' => ['amount' => '2.00', 'grants' => 20, 'scope' => 'report.partner'],
 ```
 
-Without that, credits bought at $2 are spendable by any bearer on the same scope, including one who should have paid $5. The package logs a warning (once per scope) when a resolver reprices a metered route without changing its scope. Once-off routes (`grants = 1`) never issue a session and are unaffected.
+Without that, credits bought at $2 are spendable by any bearer on the same scope, including one who should have paid $5. The package logs a warning when a resolver reprices a metered route without changing its scope — once per scope per process, so once per request under PHP-FPM and once per worker under Octane. Once-off routes (`grants = 1`) never issue a session and are unaffected.
 
 ### The Quote Is Binding
 
