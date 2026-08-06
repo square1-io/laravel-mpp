@@ -2,6 +2,7 @@
 
 namespace Square1\Mpp\Payment;
 
+use Square1\Mpp\Exceptions\InvalidConfigurationException;
 use Square1\Mpp\Protocol\ChallengeOffer;
 
 /**
@@ -14,13 +15,21 @@ use Square1\Mpp\Protocol\ChallengeOffer;
  * single-method back-compat. `offeredMethods` is the full ordered set; when it
  * holds a single entry the resulting challenge is byte-identical to a
  * pre-multi-rail challenge.
+ *
+ * The spec is immutable. A price resolver adjusts one with `with()`, which
+ * returns a new instance and validates the overrides (see that method).
  */
 final class PaymentSpec
 {
+    /** The only keys a price resolver may override. */
+    private const OVERRIDABLE = ['amount', 'currency', 'grants', 'scope', 'free'];
+
     /**
      * @param  list<string>  $paymentMethodTypes  the PRIMARY method's payment method types
      * @param  list<string>  $offeredMethods  ordered set of offered method names (primary first)
      * @param  list<string>  $preconditions  named precondition checks to run before a challenge is minted or settled
+     * @param  list<string>  $pricing  named price resolvers to apply to this route, in order
+     * @param  bool  $free  when true the gate serves the route without charging (set only by a resolver returning `free => true`)
      */
     public function __construct(
         public readonly string $amount,
@@ -32,11 +41,175 @@ final class PaymentSpec
         public readonly array $paymentMethodTypes = ['card'],
         public readonly array $offeredMethods = [],
         public readonly array $preconditions = [],
+        public readonly array $pricing = [],
+        public readonly bool $free = false,
     ) {}
 
     public function isMetered(): bool
     {
         return $this->grants > 1;
+    }
+
+    /**
+     * Return a copy with a price resolver's overrides applied.
+     *
+     * Only `amount`, `currency`, `grants`, `scope` and `free` may be overridden;
+     * the rail fields (`method`, `offeredMethods`, `networkId`,
+     * `paymentMethodTypes`) are resolved once by the SpecResolver and are not a
+     * resolver's to change. An unrecognised key throws rather than being ignored,
+     * so a typo can never silently serve the wrong price.
+     *
+     * A free route must be stated as `free => true`. A zero, negative or
+     * non-numeric `amount` is rejected, so a resolver that computes an empty or
+     * bad value fails loudly instead of quietly giving the resource away.
+     *
+     * @param  array<string, mixed>  $overrides
+     */
+    public function with(array $overrides): self
+    {
+        $unknown = array_diff(array_keys($overrides), self::OVERRIDABLE);
+
+        if ($unknown !== []) {
+            throw new InvalidConfigurationException(sprintf(
+                'A price resolver returned unknown override(s): %s. Only %s may be overridden.',
+                implode(', ', $unknown),
+                implode(', ', self::OVERRIDABLE),
+            ));
+        }
+
+        $free = $this->overrideFree($overrides);
+
+        return new self(
+            amount: $this->overrideAmount($overrides),
+            currency: $this->overrideCurrency($overrides),
+            grants: $this->overrideGrants($overrides),
+            scope: $this->overrideScope($overrides),
+            method: $this->method,
+            networkId: $this->networkId,
+            paymentMethodTypes: $this->paymentMethodTypes,
+            offeredMethods: $this->offeredMethods,
+            preconditions: $this->preconditions,
+            pricing: $this->pricing,
+            free: $free,
+        );
+    }
+
+    /**
+     * @param  array<string, mixed>  $overrides
+     */
+    private function overrideFree(array $overrides): bool
+    {
+        if (! array_key_exists('free', $overrides)) {
+            return $this->free;
+        }
+
+        if (! is_bool($overrides['free'])) {
+            throw new InvalidConfigurationException(
+                "A price resolver returned a non-boolean 'free'. Use `'free' => true` to waive the charge."
+            );
+        }
+
+        // `free` and `amount` together is ambiguous — a resolver that computes
+        // both has a bug, and guessing which one wins is exactly the kind of
+        // silent mistake this override list is meant to prevent.
+        if ($overrides['free'] === true && array_key_exists('amount', $overrides)) {
+            throw new InvalidConfigurationException(
+                "A price resolver returned both 'free' => true and an 'amount'. Return one or the other: "
+                ."'free' => true waives the charge entirely."
+            );
+        }
+
+        return $overrides['free'];
+    }
+
+    /**
+     * @param  array<string, mixed>  $overrides
+     */
+    private function overrideAmount(array $overrides): string
+    {
+        if (! array_key_exists('amount', $overrides)) {
+            return $this->amount;
+        }
+
+        $amount = $overrides['amount'];
+
+        if (! is_string($amount) && ! is_int($amount) && ! is_float($amount)) {
+            throw new InvalidConfigurationException(
+                "A price resolver returned a non-numeric 'amount'. Return a decimal string like '2.00'."
+            );
+        }
+
+        $amount = trim((string) $amount);
+
+        if ($amount === '' || ! is_numeric($amount) || (float) $amount <= 0) {
+            throw new InvalidConfigurationException(sprintf(
+                "A price resolver returned an invalid 'amount' (%s). It must be a positive number; "
+                ."to waive the charge return `'free' => true` instead.",
+                $amount === '' ? "''" : $amount,
+            ));
+        }
+
+        return $amount;
+    }
+
+    /**
+     * @param  array<string, mixed>  $overrides
+     */
+    private function overrideCurrency(array $overrides): string
+    {
+        if (! array_key_exists('currency', $overrides)) {
+            return $this->currency;
+        }
+
+        $currency = is_string($overrides['currency']) ? strtoupper(trim($overrides['currency'])) : '';
+
+        if ($currency === '') {
+            throw new InvalidConfigurationException(
+                "A price resolver returned an empty 'currency'. Return a currency code like 'USD', or omit the key."
+            );
+        }
+
+        return $currency;
+    }
+
+    /**
+     * @param  array<string, mixed>  $overrides
+     */
+    private function overrideGrants(array $overrides): int
+    {
+        if (! array_key_exists('grants', $overrides)) {
+            return $this->grants;
+        }
+
+        $grants = $overrides['grants'];
+
+        if ((! is_int($grants) && ! (is_string($grants) && ctype_digit($grants))) || (int) $grants < 1) {
+            throw new InvalidConfigurationException(
+                "A price resolver returned an invalid 'grants'. It must be an integer of 1 or more."
+            );
+        }
+
+        return (int) $grants;
+    }
+
+    /**
+     * @param  array<string, mixed>  $overrides
+     */
+    private function overrideScope(array $overrides): string
+    {
+        if (! array_key_exists('scope', $overrides)) {
+            return $this->scope;
+        }
+
+        $scope = is_string($overrides['scope']) ? trim($overrides['scope']) : '';
+
+        if ($scope === '') {
+            throw new InvalidConfigurationException(
+                "A price resolver returned an empty 'scope'. Return a non-empty scope, or omit the key."
+            );
+        }
+
+        return $scope;
     }
 
     /**

@@ -31,6 +31,11 @@ use Symfony\Component\HttpFoundation\Response;
  * verifies THAT accept's per-method signature, and only then hands off to the
  * method's Verifier. A signature minted for one method does not validate
  * another's accept, so the signature stays load-bearing per method.
+ *
+ * Before any of that, the route's price resolvers adjust the spec and its
+ * preconditions get a veto. Both run here, at the single entry point every
+ * gated route passes through, rather than in the `mpp` middleware — an
+ * attribute-enforced route reaches the gate without it.
  */
 class PaymentGate
 {
@@ -43,11 +48,29 @@ class PaymentGate
         private readonly CacheFactory $cache,
         private readonly TempoGate $tempo,
         private readonly MethodConfigValidator $configValidator,
+        private readonly PriceResolver $pricing,
+        private readonly PreconditionRunner $preconditions,
         private readonly int $sessionTtl = 3600,
     ) {}
 
     public function process(Request $request, Closure $next, PaymentSpec $spec): Response
     {
+        // Price first, so the preconditions (and everything downstream) see the
+        // amount this request will actually be charged rather than the route's
+        // static one. The resolved price only becomes binding once minted into a
+        // signed challenge — settlement always verifies against that challenge.
+        $spec = $this->pricing->apply($request, $spec);
+
+        if ($response = $this->preconditions->run($request, $spec)) {
+            return $response;
+        }
+
+        // A resolver may waive the charge outright for this request. No
+        // challenge, no session, no receipt — just the resource.
+        if ($spec->free) {
+            return $next($request);
+        }
+
         // Fail fast on a misconfigured rail before anything is minted, so a
         // missing required setting surfaces on the first request rather than as
         // a confusing settlement failure later (recommended-but-absent settings

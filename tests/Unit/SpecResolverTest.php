@@ -229,3 +229,76 @@ it('reads preconditions from a RequiresPayment attribute', function () {
 
     expect($spec->preconditions)->toBe(['postexists']);
 });
+
+it('parses a per-route pricing= list, ordered', function () {
+    $spec = $this->resolver->fromMiddlewareArgs(
+        ['5.00', 'USD', 'pricing=tiered|region'],
+        Request::create('/report')
+    );
+
+    expect($spec->pricing)->toBe(['tiered', 'region']);
+});
+
+it('defaults pricing to an empty list when none is given', function () {
+    $spec = $this->resolver->fromMiddlewareArgs(['0.50', 'USD'], Request::create('/clip'));
+
+    expect($spec->pricing)->toBe([]);
+});
+
+it('keeps the route amount as the fallback a resolver may decline to override', function () {
+    $spec = $this->resolver->fromMiddlewareArgs(['5.00', 'USD', 'pricing=tiered'], Request::create('/report'));
+
+    expect($spec->amount)->toBe('5.00')->and($spec->free)->toBeFalse();
+});
+
+it('reads pricing from a RequiresPayment attribute', function () {
+    $spec = $this->resolver->fromAttribute(
+        new RequiresPayment(amount: '5.00', pricing: ['tiered']),
+        Request::create('/report')
+    );
+
+    expect($spec->pricing)->toBe(['tiered']);
+});
+
+it('reads a price_book entry’s own pricing list', function () {
+    config()->set('mpp.price_book', [
+        'report.basic' => ['amount' => '5.00', 'pricing' => ['tiered']],
+    ]);
+
+    $spec = $this->resolver->fromMiddlewareArgs(['report.basic'], Request::create('/report'));
+
+    expect($spec->pricing)->toBe(['tiered']);
+});
+
+it('accepts a price_book pricing list written pipe-separated', function () {
+    config()->set('mpp.price_book', [
+        'report.basic' => ['amount' => '5.00', 'pricing' => 'tiered|region'],
+    ]);
+
+    $spec = $this->resolver->fromMiddlewareArgs(['report.basic'], Request::create('/report'));
+
+    expect($spec->pricing)->toBe(['tiered', 'region']);
+});
+
+it('accepts a price_book preconditions list written pipe-separated', function () {
+    config()->set('mpp.price_book', [
+        'report.basic' => ['amount' => '5.00', 'preconditions' => 'postexists|usernotblocked'],
+    ]);
+
+    $spec = $this->resolver->fromMiddlewareArgs(['report.basic'], Request::create('/report'));
+
+    expect($spec->preconditions)->toBe(['postexists', 'usernotblocked']);
+});
+
+it('lets a route’s pricing= option override the price_book entry’s list', function () {
+    config()->set('mpp.price_book', [
+        'report.basic' => ['amount' => '5.00', 'pricing' => ['tiered']],
+    ]);
+
+    $spec = $this->resolver->fromMiddlewareArgs(
+        ['report.basic', 'pricing=region'],
+        Request::create('/report')
+    );
+
+    expect($spec->pricing)->toBe(['region']);
+});

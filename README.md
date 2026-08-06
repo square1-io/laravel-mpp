@@ -40,6 +40,7 @@ For a real-world demo, see [PayForGoals.com](https://www.payforgoals.com).
 - [Choose a Payment Rail](#choose-a-payment-rail)
 - [Protecting Routes](#protecting-routes)
 - [Metered Access](#metered-access)
+- [Dynamic Pricing](#dynamic-pricing)
 - [Preconditions](#preconditions)
 - [Session Storage](#session-storage)
 - [Configuration](#configuration)
@@ -412,6 +413,8 @@ Automatic enforcement is disabled by default. It runs on the configured route gr
 | Scope | `scope=report.basic` | `scope: 'report.basic'` |
 | Single method | `method=tempo` | `method: 'tempo'` |
 | Multiple native methods | `methods=stripe\|acme` | `methods: ['stripe', 'acme']` |
+| Price per request | `pricing=tiered` | `pricing: ['tiered']` |
+| Preconditions | `preconditions=postexists` | `preconditions: ['postexists']` |
 
 `scope` is a label you choose for the priced resource. Metered sessions are locked to their scope. If you omit it, the package derives one from the route URI.
 
@@ -471,6 +474,121 @@ Session spends are scope-checked and atomic. Concurrent requests cannot spend mo
 
 Metering works the same on both rails. A Tempo payment for a metered route also issues a session, reused with the same `Authorization: Payment ..., session="sess_..."` header shown above.
 
+## Dynamic Pricing
+
+Everything above prices a route. Sometimes the price belongs to the *request*: a pro account pays $2 where a free account pays $5, a partner gets a bigger bundle for the same money, a caller in another region pays in another currency.
+
+A price resolver decides that per request. Register it once, name it on the routes it applies to, and the resolved price is what gets minted into the `402`:
+
+```php
+// config/mpp.php
+'pricing' => [
+    'resolvers' => [
+        'tiered' => [\App\Mpp\Pricing\TieredPrice::class, 'price'],
+    ],
+
+    // Apply to every gated route, before any route-specific resolvers.
+    'global' => [],
+],
+```
+
+```php
+namespace App\Mpp\Pricing;
+
+use Illuminate\Http\Request;
+use Square1\Mpp\Payment\PaymentSpec;
+
+class TieredPrice
+{
+    /** @return array<string, mixed>|null */
+    public function price(Request $request, PaymentSpec $spec): ?array
+    {
+        return match ($request->user()?->tier) {
+            'pro'     => ['amount' => '2.00'],
+            'partner' => ['amount' => '2.00', 'grants' => 20, 'scope' => 'report.partner'],
+            'staff'   => ['free' => true],
+            default   => null,   // leave the route's own price alone
+        };
+    }
+}
+```
+
+Attach it like any other option:
+
+```php
+Route::get('/report', ReportController::class)
+    ->middleware('mpp:5.00,USD,scope=report,pricing=tiered');
+
+#[RequiresPayment(amount: '5.00', scope: 'report', pricing: ['tiered'])]
+public function show() { /* ... */ }
+```
+
+```php
+// Or on a price_book entry, so every route using the entry inherits it.
+'price_book' => [
+    'report.basic' => ['amount' => '5.00', 'currency' => 'USD', 'pricing' => ['tiered']],
+],
+```
+
+The route still declares an amount. That is the price for callers the resolver declines to reprice (returning `null`), so an endpoint always has a price even if the resolver is dormant or a tier is unhandled.
+
+### What a Resolver May Change
+
+| Key | Effect |
+| --- | --- |
+| `amount` | The price. Must be a positive number. |
+| `currency` | The currency code, upper-cased for you. |
+| `grants` | Accesses per payment. `> 1` issues a metered session. |
+| `scope` | The label the payment and any session are bound to. |
+| `free` | `true` serves the route without charging. |
+
+Anything else — including `method` and `methods` — throws `InvalidConfigurationException`. Which rails a route offers is resolved once, from the route's own `method=` / `methods=` and the configured defaults, and is not a resolver's to change: a resolver sets the price, not the payment terms around it.
+
+A zero, negative, or non-numeric `amount` also throws. Giving a resource away has to be said out loud:
+
+```php
+return ['free' => true];    // yes, serve this one for nothing
+return ['amount' => '0'];   // throws
+```
+
+so a resolver that miscalculates, or reads an empty config value, fails loudly instead of quietly making a paid endpoint free. `free => true` and an `amount` together throw for the same reason: which one you meant should never be a guess. A free request skips the challenge, the session, and the receipt entirely — it is served like an unguarded route — but its preconditions still run, so a free caller cannot reach a resource a check would have refused them.
+
+### Composition
+
+Resolvers compose like preconditions. Globals run first, then the route's own, in declared order, de-duplicated. Each one receives the spec as the previous one left it, so a later resolver can build on an earlier one:
+
+```php
+->middleware('mpp:5.00,USD,pricing=tiered|regional')
+```
+
+Here `regional` sees the tier-adjusted amount, not the route's $5. An unknown name throws rather than falling back to the static price, so a typo can't quietly charge everyone list price.
+
+### Pricing and Metered Sessions
+
+Metered sessions are bound to a **scope**, not to a payer. A session is a bearer credit balance: whoever holds the id can spend it on that scope.
+
+So if a metered route's price varies, vary its `scope` too:
+
+```php
+'partner' => ['amount' => '2.00', 'grants' => 20, 'scope' => 'report.partner'],
+```
+
+Without that, credits bought at $2 are spendable by any bearer on the same scope, including one who should have paid $5. The package logs a warning (once per scope) when a resolver reprices a metered route without changing its scope. Once-off routes (`grants = 1`) never issue a session and are unaffected.
+
+### The Quote Is Binding
+
+A resolver decides the price of a *challenge*, not of a settlement. The amount is HMAC-signed into the `402` and settlement verifies against that stored challenge — never against a freshly-resolved spec. So a resolver whose answer changes between the `402` and the paid retry cannot change what that buyer was quoted:
+
+```
+402  →  amount="2.00"   (caller was on the pro tier)
+        ... their subscription lapses ...
+retry →  settles at 2.00, receipt says 2.00
+```
+
+The same holds in the other direction: a resolver that turns `free` after issuing a `402` cannot burn or settle that challenge, and a resolver that raises the price cannot charge an outstanding quote more than it promised. Only new challenges get the new price.
+
+Resolvers run on every gated request, paid retries and session spends included, so keep them cheap and side-effect free — they are not the place to write an audit record. The resolved `amount` is ignored on those requests, but the resolved `scope` is not: a session is spent against the scope the resolver returns *now*. If a caller's tier changes while they hold credits, their session stops matching and they get a fresh `402`. Keep a tier's scope stable for as long as its sessions can live (`MPP_SESSION_TTL`), or key the scope on something that outlives the tier.
+
 ## Preconditions
 
 The payment gate runs before your controller. On a paid retry it settles the payment and then calls the controller, so a 404 raised inside the controller comes after the buyer has already paid. And the first, unpaid request to a missing resource returns a `402`, which tells an agent to pay for something that does not exist.
@@ -523,6 +641,8 @@ public function show() { /* ... */ }
 
 Checks are additive and composed in order: the `global` checks run first, then the route's own, de-duplicated. The first check that returns a response wins, and the rest do not run, so a global `usernotblocked` short-circuits before a route's `postexists` ever fires. A name that is not defined in `checks` throws `InvalidConfigurationException`, so a typo fails closed rather than silently skipping a check.
 
+Checks run at the gate, on every route it guards — including one enforced automatically from its `#[RequiresPayment]` attribute. The `PaymentSpec` they receive has already been through any [price resolvers](#dynamic-pricing), so `$spec->amount` is the price this request will actually be charged, not the route's static one. A check can use that: refuse a purchase above a caller's spending cap, for instance.
+
 If a request can only be judged after settlement, you have to refund instead, which is worse for the buyer and rail-specific. Prefer a precondition wherever existence or eligibility can be determined up front.
 
 ## Session Storage
@@ -571,6 +691,10 @@ The main settings live in `config/mpp.php`.
 | `attributes.enabled` | Enables automatic `#[RequiresPayment]` enforcement. Default: `false`. |
 | `attributes.middleware_groups` | Route groups used by automatic attribute enforcement. Default: `['web', 'api']`. |
 | `price_book` | Named pricing presets. |
+| `pricing.resolvers` | Named `[Class::class, 'method']` price resolvers, keyed by the name routes reference. |
+| `pricing.global` | Resolvers applied to every gated route, before route-specific ones. |
+| `preconditions.checks` | Named `[Class::class, 'method']` checks, keyed by the name routes reference. |
+| `preconditions.global` | Checks run on every gated route, before route-specific ones. |
 
 ### Price Book
 
@@ -588,6 +712,22 @@ Route::get('/report', ReportController::class)
 ```
 
 The key also becomes the default scope.
+
+An entry can also carry its own `preconditions` and `pricing` lists, so every route using it inherits them:
+
+```php
+'price_book' => [
+    'report.basic' => [
+        'amount' => '5.00',
+        'currency' => 'USD',
+        'grants' => 10,
+        'pricing' => ['tiered'],
+        'preconditions' => ['usernotblocked'],
+    ],
+],
+```
+
+Either list may be written as an array or pipe-separated (`'tiered|regional'`). A route that names its own `pricing=` or `preconditions=` replaces the entry's list rather than adding to it.
 
 ### Configuration Validation
 
@@ -801,6 +941,8 @@ Tempo uses the separate mppx format emitted and consumed by the `mppx` client.
 
 - Challenges are HMAC-signed over the payment terms and expiry.
 - A paid retry must echo the signature for the selected method.
+- A dynamically resolved price binds at mint time. Settlement verifies against the stored challenge, so re-resolving cannot change what a buyer was quoted.
+- Waiving a charge must be explicit (`free => true`); a zero or unparseable resolved amount throws rather than serving free.
 - Challenges are burned after successful settlement.
 - Stripe settlement is trusted only after a succeeded PaymentIntent matching the challenge amount and currency.
 - Tempo settlement is trusted only after the signed transfer pays the challenged token, amount, and recipient, and the transaction is confirmed.

@@ -228,11 +228,59 @@ return [
     |--------------------------------------------------------------------------
     |
     | Optional named pricing presets referenced by scope key, e.g.
-    | ->middleware('mpp:report.basic').
+    | ->middleware('mpp:report.basic'). An entry may also carry its own
+    | `preconditions` and `pricing` lists (array, or a pipe-separated string),
+    | which a route's own option overrides.
     |
     */
     'price_book' => [
         // 'report.basic' => ['amount' => '0.50', 'currency' => 'USD', 'grants' => 10],
+        // 'report.pro'   => ['amount' => '5.00', 'pricing' => ['tiered']],
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Dynamic pricing
+    |--------------------------------------------------------------------------
+    |
+    | Named resolvers that set the price per REQUEST rather than per route, so
+    | one endpoint can charge $2 to one caller and $5 to another. Each is a
+    | [Class::class, 'method'] pair (resolved via the container, so
+    | config:cache-safe) called with the Request and the resolved PaymentSpec,
+    | returning an array of overrides or null to keep the route's static price:
+    |
+    |     return ['amount' => '2.00'];                 // cheaper for this caller
+    |     return ['amount' => '2.00', 'grants' => 20, 'scope' => 'report.pro'];
+    |     return ['free' => true];                     // waive the charge entirely
+    |     return null;                                 // leave the price alone
+    |
+    | Overridable keys: amount, currency, grants, scope, free. Anything else
+    | throws, as does a zero/negative/non-numeric amount — waiving a charge has
+    | to be said out loud with `free => true`, so a resolver that miscomputes an
+    | amount fails instead of giving the resource away. Rail selection
+    | (method/methods) is not a resolver's to change.
+    |
+    | `global` resolvers apply to every gated route. A route adds its own with
+    | `pricing=` on the middleware (`mpp:5.00,USD,pricing=tiered`) or
+    | `pricing: [...]` on the attribute. Globals run first, then the route's own,
+    | in order and de-duplicated, each seeing the result of the last. An unknown
+    | name throws, so a typo can never silently fall back to the static price.
+    |
+    | The route's own amount stays REQUIRED: it is the fallback for when a
+    | resolver returns null. The price a buyer pays is the one bound into the
+    | signed 402 — settlement verifies against the stored challenge, never a
+    | re-resolved spec — so a resolver whose answer changes between the 402 and
+    | the paid retry cannot alter what that buyer was quoted.
+    |
+    */
+    'pricing' => [
+        'resolvers' => [
+            // 'tiered' => [\App\Mpp\Pricing\TieredPrice::class, 'price'],
+        ],
+
+        'global' => [
+            // 'tiered',
+        ],
     ],
 
     /*

@@ -13,6 +13,8 @@ use Square1\Mpp\Metering\Stores\CacheSessionStore;
 use Square1\Mpp\Metering\Stores\DatabaseSessionStore;
 use Square1\Mpp\Payment\MethodConfigValidator;
 use Square1\Mpp\Payment\PaymentGate;
+use Square1\Mpp\Payment\PreconditionRunner;
+use Square1\Mpp\Payment\PriceResolver;
 use Square1\Mpp\Payment\TempoGate;
 use Square1\Mpp\Protocol\ChallengeFactory;
 use Square1\Mpp\Protocol\ChallengeStore;
@@ -56,6 +58,12 @@ class MppServiceProvider extends ServiceProvider
         // Singleton so the once-per-process "recommended config missing" warning
         // is logged once, not on every request.
         $this->app->singleton(MethodConfigValidator::class, fn () => new MethodConfigValidator);
+
+        // Singleton for the same reason: the "metered scope priced per request"
+        // warning is logged once per scope per process, not per request.
+        $this->app->singleton(PriceResolver::class, fn () => new PriceResolver);
+
+        $this->app->singleton(PreconditionRunner::class, fn () => new PreconditionRunner);
 
         $this->app->singleton(SessionStore::class, fn ($app) => $this->makeSessionStore($app));
 
@@ -113,6 +121,8 @@ class MppServiceProvider extends ServiceProvider
             cache: $app->make(CacheFactory::class),
             tempo: $app->make(TempoGate::class),
             configValidator: $app->make(MethodConfigValidator::class),
+            pricing: $app->make(PriceResolver::class),
+            preconditions: $app->make(PreconditionRunner::class),
             sessionTtl: (int) config('mpp.session_ttl', 3600),
         ));
     }

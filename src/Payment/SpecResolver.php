@@ -34,8 +34,10 @@ class SpecResolver
                 isset($options['methods'])
                     ? array_values(array_filter(array_map('trim', explode('|', $options['methods']))))
                     : (isset($entry['methods']) ? (array) $entry['methods'] : null),
-                $this->parsePreconditions($options)
-                    ?: (isset($entry['preconditions']) ? (array) $entry['preconditions'] : []),
+                $this->parseNamedList($options, 'preconditions')
+                    ?: $this->entryList($entry, 'preconditions'),
+                $this->parseNamedList($options, 'pricing')
+                    ?: $this->entryList($entry, 'pricing'),
             );
         }
 
@@ -73,7 +75,8 @@ class SpecResolver
             $options['method'] ?? null,
             $request,
             $methods,
-            $this->parsePreconditions($options),
+            $this->parseNamedList($options, 'preconditions'),
+            $this->parseNamedList($options, 'pricing'),
         );
     }
 
@@ -97,14 +100,16 @@ class SpecResolver
             $request,
             $attribute->methods,
             $attribute->preconditions,
+            $attribute->pricing,
         );
     }
 
     /**
      * @param  list<string>|null  $methods  explicit per-route ordered method set, or null to use config defaults
      * @param  list<string>  $preconditions  named precondition checks to run for this route (in order)
+     * @param  list<string>  $pricing  named price resolvers to apply for this route (in order)
      */
-    private function build(string $amount, string $currency, int $grants, ?string $scope, ?string $method, Request $request, ?array $methods = null, array $preconditions = []): PaymentSpec
+    private function build(string $amount, string $currency, int $grants, ?string $scope, ?string $method, Request $request, ?array $methods = null, array $preconditions = [], array $pricing = []): PaymentSpec
     {
         $offered = $this->resolveOfferedMethods($method, $methods);
         $primary = $offered[0];
@@ -120,6 +125,7 @@ class SpecResolver
             paymentMethodTypes: $methodConfig['payment_method_types'] ?? ['card'],
             offeredMethods: $offered,
             preconditions: $preconditions,
+            pricing: $pricing,
         );
     }
 
@@ -193,19 +199,41 @@ class SpecResolver
     }
 
     /**
-     * Parse the per-route `preconditions=a|b` option into an ordered list of
-     * named checks (pipe-separated, like `methods=`). Empty when unset.
+     * Parse a per-route pipe-separated option (`preconditions=a|b`, `pricing=a|b`)
+     * into an ordered list of names, like `methods=`. Empty when unset.
      *
      * @param  array<string, string>  $options
      * @return list<string>
      */
-    private function parsePreconditions(array $options): array
+    private function parseNamedList(array $options, string $key): array
     {
-        if (! isset($options['preconditions']) || $options['preconditions'] === '') {
+        if (! isset($options[$key]) || $options[$key] === '') {
             return [];
         }
 
-        return array_values(array_filter(array_map('trim', explode('|', $options['preconditions']))));
+        return array_values(array_filter(array_map('trim', explode('|', $options[$key]))));
+    }
+
+    /**
+     * Read a price_book entry's own list of names, accepting either an array or
+     * the same pipe-separated string the middleware option takes.
+     *
+     * @param  array<string, mixed>  $entry
+     * @return list<string>
+     */
+    private function entryList(array $entry, string $key): array
+    {
+        $value = $entry[$key] ?? null;
+
+        if ($value === null || $value === '' || $value === []) {
+            return [];
+        }
+
+        if (is_string($value)) {
+            return array_values(array_filter(array_map('trim', explode('|', $value))));
+        }
+
+        return array_values(array_map('strval', (array) $value));
     }
 
     /**
