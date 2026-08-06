@@ -48,6 +48,8 @@ For a real-world demo, see [PayForGoals.com](https://www.payforgoals.com).
 - [Advanced Usage](#advanced-usage)
 - [License](#license)
 
+Release history, and anything to watch when upgrading, is in [CHANGELOG.md](CHANGELOG.md).
+
 ## Installation
 
 Requires PHP 8.4 and Laravel 12 or 13.
