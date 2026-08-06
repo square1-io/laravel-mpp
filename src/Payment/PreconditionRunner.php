@@ -3,7 +3,7 @@
 namespace Square1\Mpp\Payment;
 
 use Illuminate\Http\Request;
-use Square1\Mpp\Exceptions\InvalidConfigurationException;
+use Square1\Mpp\Payment\Concerns\ResolvesNamedCallables;
 use Symfony\Component\HttpFoundation\Response;
 
 /**
@@ -25,26 +25,20 @@ use Symfony\Component\HttpFoundation\Response;
  */
 class PreconditionRunner
 {
+    use ResolvesNamedCallables;
+
     public function run(Request $request, PaymentSpec $spec): ?Response
     {
+        $names = $this->namedList('mpp.preconditions.global', $spec->preconditions);
+
+        if ($names === []) {
+            return null;
+        }
+
         $checks = (array) config('mpp.preconditions.checks', []);
 
-        $names = array_values(array_unique(array_merge(
-            (array) config('mpp.preconditions.global', []),
-            $spec->preconditions,
-        )));
-
         foreach ($names as $name) {
-            $check = $checks[$name] ?? null;
-
-            if (! is_array($check) || count($check) !== 2 || ! is_string($check[0])) {
-                throw new InvalidConfigurationException(
-                    "Unknown precondition '{$name}'. Define it under mpp.preconditions.checks "
-                    ."as a [Class::class, 'method'] pair."
-                );
-            }
-
-            [$class, $method] = $check;
+            [$class, $method] = $this->namedCallable($checks, $name, 'precondition', 'mpp.preconditions.checks');
 
             $response = app($class)->{$method}($request, $spec);
 

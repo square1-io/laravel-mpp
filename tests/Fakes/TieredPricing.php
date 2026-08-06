@@ -12,6 +12,9 @@ use Square1\Mpp\Payment\PaymentSpec;
  *
  * `$sawAmounts` records the amount on the spec as each call received it, so tests
  * can assert that resolvers compose in order rather than each seeing the original.
+ *
+ * Kept deliberately identical to RegionPricing: the tests need two separately
+ * named resolvers to assert ordering, not two different recording behaviours.
  */
 class TieredPricing
 {
@@ -26,16 +29,12 @@ class TieredPricing
     /** @var list<string> */
     public static array $sawAmounts = [];
 
-    /** @var list<string> */
-    public static array $sawScopes = [];
-
     public static function reset(): void
     {
         self::$overrides = null;
         self::$using = null;
         self::$calls = 0;
         self::$sawAmounts = [];
-        self::$sawScopes = [];
     }
 
     /**
@@ -45,7 +44,6 @@ class TieredPricing
     {
         self::$calls++;
         self::$sawAmounts[] = $spec->amount;
-        self::$sawScopes[] = $spec->scope;
 
         if (self::$using !== null) {
             return (self::$using)($request, $spec);

@@ -4,6 +4,7 @@ namespace Square1\Mpp\Payment;
 
 use Square1\Mpp\Exceptions\InvalidConfigurationException;
 use Square1\Mpp\Protocol\ChallengeOffer;
+use Square1\Mpp\Support\Money;
 
 /**
  * The resolved payment requirement for a route: how much, in what currency, how
@@ -77,20 +78,28 @@ final class PaymentSpec
             ));
         }
 
-        $free = $this->overrideFree($overrides);
+        // The one rule that spans two keys: `free` and `amount` together is
+        // ambiguous — a resolver that computes both has a bug, and guessing which
+        // one wins is exactly the kind of silent mistake this list guards against.
+        if (($overrides['free'] ?? false) === true && array_key_exists('amount', $overrides)) {
+            throw new InvalidConfigurationException(
+                "A price resolver returned both 'free' => true and an 'amount'. Return one or the other: "
+                ."'free' => true waives the charge entirely."
+            );
+        }
 
         return new self(
             amount: $this->overrideAmount($overrides),
-            currency: $this->overrideCurrency($overrides),
+            currency: $this->overrideString($overrides, 'currency', $this->currency, upper: true, hint: "Return a currency code like 'USD', or omit the key."),
             grants: $this->overrideGrants($overrides),
-            scope: $this->overrideScope($overrides),
+            scope: $this->overrideString($overrides, 'scope', $this->scope, upper: false, hint: 'Return a non-empty scope, or omit the key.'),
             method: $this->method,
             networkId: $this->networkId,
             paymentMethodTypes: $this->paymentMethodTypes,
             offeredMethods: $this->offeredMethods,
             preconditions: $this->preconditions,
             pricing: $this->pricing,
-            free: $free,
+            free: $this->overrideFree($overrides),
         );
     }
 
@@ -106,16 +115,6 @@ final class PaymentSpec
         if (! is_bool($overrides['free'])) {
             throw new InvalidConfigurationException(
                 "A price resolver returned a non-boolean 'free'. Use `'free' => true` to waive the charge."
-            );
-        }
-
-        // `free` and `amount` together is ambiguous — a resolver that computes
-        // both has a bug, and guessing which one wins is exactly the kind of
-        // silent mistake this override list is meant to prevent.
-        if ($overrides['free'] === true && array_key_exists('amount', $overrides)) {
-            throw new InvalidConfigurationException(
-                "A price resolver returned both 'free' => true and an 'amount'. Return one or the other: "
-                ."'free' => true waives the charge entirely."
             );
         }
 
@@ -141,7 +140,9 @@ final class PaymentSpec
 
         $amount = trim((string) $amount);
 
-        if ($amount === '' || ! is_numeric($amount) || (float) $amount <= 0) {
+        // Format is Money's rule (so the gate and mint time agree on what a
+        // well-formed amount is); "must be positive" is this spec's own.
+        if (! Money::isValidAmount($amount) || (float) $amount <= 0) {
             throw new InvalidConfigurationException(sprintf(
                 "A price resolver returned an invalid 'amount' (%s). It must be a positive number; "
                 ."to waive the charge return `'free' => true` instead.",
@@ -153,23 +154,26 @@ final class PaymentSpec
     }
 
     /**
+     * Shared shape for the string overrides: absent leaves the current value, a
+     * non-string or blank one is a resolver bug and throws.
+     *
      * @param  array<string, mixed>  $overrides
      */
-    private function overrideCurrency(array $overrides): string
+    private function overrideString(array $overrides, string $key, string $current, bool $upper, string $hint): string
     {
-        if (! array_key_exists('currency', $overrides)) {
-            return $this->currency;
+        if (! array_key_exists($key, $overrides)) {
+            return $current;
         }
 
-        $currency = is_string($overrides['currency']) ? strtoupper(trim($overrides['currency'])) : '';
+        $value = is_string($overrides[$key]) ? trim($overrides[$key]) : '';
 
-        if ($currency === '') {
+        if ($value === '') {
             throw new InvalidConfigurationException(
-                "A price resolver returned an empty 'currency'. Return a currency code like 'USD', or omit the key."
+                "A price resolver returned an empty '{$key}'. {$hint}"
             );
         }
 
-        return $currency;
+        return $upper ? strtoupper($value) : $value;
     }
 
     /**
@@ -190,26 +194,6 @@ final class PaymentSpec
         }
 
         return (int) $grants;
-    }
-
-    /**
-     * @param  array<string, mixed>  $overrides
-     */
-    private function overrideScope(array $overrides): string
-    {
-        if (! array_key_exists('scope', $overrides)) {
-            return $this->scope;
-        }
-
-        $scope = is_string($overrides['scope']) ? trim($overrides['scope']) : '';
-
-        if ($scope === '') {
-            throw new InvalidConfigurationException(
-                "A price resolver returned an empty 'scope'. Return a non-empty scope, or omit the key."
-            );
-        }
-
-        return $scope;
     }
 
     /**

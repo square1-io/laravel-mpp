@@ -5,6 +5,7 @@ namespace Square1\Mpp\Payment;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 use Square1\Mpp\Exceptions\InvalidConfigurationException;
+use Square1\Mpp\Payment\Concerns\ResolvesNamedCallables;
 
 /**
  * Applies a route's named price resolvers to its resolved PaymentSpec, so the
@@ -27,35 +28,30 @@ use Square1\Mpp\Exceptions\InvalidConfigurationException;
  */
 class PriceResolver
 {
-    /** @var array<string, bool> metered scopes already warned about this process. */
+    use ResolvesNamedCallables;
+
+    /**
+     * Route scopes already warned about this process. Bounded by the number of
+     * gated routes: an entry is only ever recorded for a scope a resolver left
+     * as the route declared it (see warnOnUnscopedMeteredPrice).
+     *
+     * @var array<string, bool>
+     */
     private array $warned = [];
 
     public function apply(Request $request, PaymentSpec $spec): PaymentSpec
     {
-        $resolvers = (array) config('mpp.pricing.resolvers', []);
-
-        $names = array_values(array_unique(array_merge(
-            (array) config('mpp.pricing.global', []),
-            $spec->pricing,
-        )));
+        $names = $this->namedList('mpp.pricing.global', $spec->pricing);
 
         if ($names === []) {
             return $spec;
         }
 
+        $resolvers = (array) config('mpp.pricing.resolvers', []);
         $original = $spec;
 
         foreach ($names as $name) {
-            $resolver = $resolvers[$name] ?? null;
-
-            if (! is_array($resolver) || count($resolver) !== 2 || ! is_string($resolver[0])) {
-                throw new InvalidConfigurationException(
-                    "Unknown price resolver '{$name}'. Define it under mpp.pricing.resolvers "
-                    ."as a [Class::class, 'method'] pair."
-                );
-            }
-
-            [$class, $method] = $resolver;
+            [$class, $method] = $this->namedCallable($resolvers, $name, 'price resolver', 'mpp.pricing.resolvers');
 
             $overrides = app($class)->{$method}($request, $spec);
 
@@ -86,7 +82,10 @@ class PriceResolver
      *
      * Warned once per scope per process rather than enforced: sharing a scope
      * across tiers is a legitimate (if unusual) choice, and this is not a
-     * misconfiguration that makes the 402 itself wrong.
+     * misconfiguration that makes the 402 itself wrong. The flag is keyed on the
+     * ROUTE's scope, which is why `$warned` stays bounded by the number of gated
+     * routes: a resolver that varies the scope per request — the thing this
+     * warning asks for — doesn't reach the flag at all.
      */
     private function warnOnUnscopedMeteredPrice(PaymentSpec $original, PaymentSpec $final): void
     {
@@ -98,11 +97,11 @@ class PriceResolver
             return;
         }
 
-        if (isset($this->warned[$final->scope])) {
+        if (isset($this->warned[$original->scope])) {
             return;
         }
 
-        $this->warned[$final->scope] = true;
+        $this->warned[$original->scope] = true;
 
         Log::warning(
             "[mpp] A price resolver changed the amount on metered scope '{$final->scope}' without changing the "

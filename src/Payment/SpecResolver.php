@@ -31,9 +31,8 @@ class SpecResolver
                 $options['scope'] ?? $args[0],
                 $options['method'] ?? null,
                 $request,
-                isset($options['methods'])
-                    ? array_values(array_filter(array_map('trim', explode('|', $options['methods']))))
-                    : (isset($entry['methods']) ? (array) $entry['methods'] : null),
+                $this->parseNamedList($options, 'methods')
+                    ?: ($this->entryList($entry, 'methods') ?: null),
                 $this->parseNamedList($options, 'preconditions')
                     ?: $this->entryList($entry, 'preconditions'),
                 $this->parseNamedList($options, 'pricing')
@@ -63,9 +62,7 @@ class SpecResolver
         }
 
         // A per-route override: `methods=stripe|other` (pipe-separated, ordered).
-        $methods = isset($options['methods']) && $options['methods'] !== ''
-            ? array_values(array_filter(array_map('trim', explode('|', $options['methods']))))
-            : null;
+        $methods = $this->parseNamedList($options, 'methods') ?: null;
 
         return $this->build(
             (string) $amount,
@@ -199,19 +196,29 @@ class SpecResolver
     }
 
     /**
-     * Parse a per-route pipe-separated option (`preconditions=a|b`, `pricing=a|b`)
-     * into an ordered list of names, like `methods=`. Empty when unset.
+     * Parse a per-route pipe-separated option — `methods=a|b`, `preconditions=a|b`,
+     * `pricing=a|b` — into an ordered list of names. Empty when unset or blank.
      *
      * @param  array<string, string>  $options
      * @return list<string>
      */
     private function parseNamedList(array $options, string $key): array
     {
-        if (! isset($options[$key]) || $options[$key] === '') {
+        return $this->splitList($options[$key] ?? null);
+    }
+
+    /**
+     * The one pipe-separated-list rule: split, trim, drop the blanks.
+     *
+     * @return list<string>
+     */
+    private function splitList(?string $value): array
+    {
+        if ($value === null || $value === '') {
             return [];
         }
 
-        return array_values(array_filter(array_map('trim', explode('|', $options[$key]))));
+        return array_values(array_filter(array_map('trim', explode('|', $value))));
     }
 
     /**
@@ -225,12 +232,8 @@ class SpecResolver
     {
         $value = $entry[$key] ?? null;
 
-        if ($value === null || $value === '' || $value === []) {
-            return [];
-        }
-
-        if (is_string($value)) {
-            return array_values(array_filter(array_map('trim', explode('|', $value))));
+        if (is_string($value) || $value === null) {
+            return $this->splitList($value);
         }
 
         return array_values(array_map('strval', (array) $value));
