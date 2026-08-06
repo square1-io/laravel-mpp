@@ -18,10 +18,10 @@ use Symfony\Component\HttpFoundation\Response;
  * (Request, PaymentSpec), returning a Response to reject or null to proceed.
  * An unknown name fails closed, so a typo can never silently skip a check.
  *
- * Lives at the gate rather than in the middleware so that every path into the
- * gate runs it — including a route auto-enforced from its #[RequiresPayment]
- * attribute, which reaches the gate without passing through the `mpp`
- * middleware at all.
+ * Driven by the PaymentPipeline rather than by a middleware, so a route gets its
+ * checks however it was declared. When this lived in the `mpp` middleware, a
+ * route auto-enforced from its #[RequiresPayment] attribute skipped them
+ * silently, never passing through that middleware at all.
  */
 class PreconditionRunner
 {

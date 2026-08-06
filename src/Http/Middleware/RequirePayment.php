@@ -4,11 +4,7 @@ namespace Square1\Mpp\Http\Middleware;
 
 use Closure;
 use Illuminate\Http\Request;
-use Square1\Mpp\Exceptions\InvalidConfigurationException;
-use Square1\Mpp\Payment\AttributeResolver;
-use Square1\Mpp\Payment\PaymentGate;
-use Square1\Mpp\Payment\PaymentSpec;
-use Square1\Mpp\Payment\SpecResolver;
+use Square1\Mpp\Payment\PaymentPipeline;
 use Symfony\Component\HttpFoundation\Response;
 
 /**
@@ -20,36 +16,16 @@ use Symfony\Component\HttpFoundation\Response;
  *   ->middleware('mpp:5.00,USD,pricing=tiered')                // price per request
  *   ->middleware('mpp')   + #[RequiresPayment(...)] on the action
  *
- * Resolving the spec is all this does; pricing, preconditions and the payment
- * decision itself all live in the PaymentGate, so they apply equally to routes
- * enforced from a #[RequiresPayment] attribute.
+ * Everything the arguments mean, and everything that happens once they are
+ * understood, belongs to the PaymentPipeline — shared with the automatic
+ * attribute enforcer so neither route style can drift from the other.
  */
 class RequirePayment
 {
-    public function __construct(
-        private readonly PaymentGate $gate,
-        private readonly SpecResolver $resolver,
-    ) {}
+    public function __construct(private readonly PaymentPipeline $payments) {}
 
     public function handle(Request $request, Closure $next, string ...$args): Response
     {
-        $spec = $args !== []
-            ? $this->resolver->fromMiddlewareArgs($args, $request)
-            : $this->specFromAttribute($request);
-
-        return $this->gate->process($request, $next, $spec);
-    }
-
-    private function specFromAttribute(Request $request): PaymentSpec
-    {
-        $attribute = AttributeResolver::forRoute($request->route());
-
-        if ($attribute === null) {
-            throw new InvalidConfigurationException(
-                'The mpp middleware was used without arguments and the action has no #[RequiresPayment] attribute.'
-            );
-        }
-
-        return $this->resolver->fromAttribute($attribute, $request);
+        return $this->payments->fromArgs($request, $next, $args);
     }
 }

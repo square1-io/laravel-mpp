@@ -2,6 +2,7 @@
 
 use Square1\Mpp\Http\Middleware\EnforcePaymentAttributes;
 use Square1\Mpp\Http\Middleware\RequirePayment;
+use Square1\Mpp\Payment\PaymentPipeline;
 use Square1\Mpp\Payment\PreconditionRunner;
 use Square1\Mpp\Payment\PriceResolver;
 
@@ -38,4 +39,14 @@ it('shares the price resolver so its metered-scope warning is logged once per pr
 
 it('shares the precondition runner', function () {
     expect(app(PreconditionRunner::class))->toBe(app(PreconditionRunner::class));
+});
+
+it('shares one pipeline between both middlewares', function () {
+    $pipeline = app(PaymentPipeline::class);
+
+    expect(app(PaymentPipeline::class))->toBe($pipeline)
+        // Both middlewares resolve, and both get that same pipeline — the whole
+        // point of collapsing the two entry paths into one.
+        ->and(app(RequirePayment::class))->toBeInstanceOf(RequirePayment::class)
+        ->and(app(EnforcePaymentAttributes::class))->toBeInstanceOf(EnforcePaymentAttributes::class);
 });

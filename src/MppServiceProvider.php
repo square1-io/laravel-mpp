@@ -13,8 +13,10 @@ use Square1\Mpp\Metering\Stores\CacheSessionStore;
 use Square1\Mpp\Metering\Stores\DatabaseSessionStore;
 use Square1\Mpp\Payment\MethodConfigValidator;
 use Square1\Mpp\Payment\PaymentGate;
+use Square1\Mpp\Payment\PaymentPipeline;
 use Square1\Mpp\Payment\PreconditionRunner;
 use Square1\Mpp\Payment\PriceResolver;
+use Square1\Mpp\Payment\SpecResolver;
 use Square1\Mpp\Payment\TempoGate;
 use Square1\Mpp\Protocol\ChallengeFactory;
 use Square1\Mpp\Protocol\ChallengeStore;
@@ -121,9 +123,16 @@ class MppServiceProvider extends ServiceProvider
             cache: $app->make(CacheFactory::class),
             tempo: $app->make(TempoGate::class),
             configValidator: $app->make(MethodConfigValidator::class),
+            sessionTtl: (int) config('mpp.session_ttl', 3600),
+        ));
+
+        // The one path from a guarded route to the gate, shared by both
+        // middlewares so neither route style can skip a step the other runs.
+        $this->app->singleton(PaymentPipeline::class, fn ($app) => new PaymentPipeline(
+            specs: $app->make(SpecResolver::class),
             pricing: $app->make(PriceResolver::class),
             preconditions: $app->make(PreconditionRunner::class),
-            sessionTtl: (int) config('mpp.session_ttl', 3600),
+            gate: $app->make(PaymentGate::class),
         ));
     }
 

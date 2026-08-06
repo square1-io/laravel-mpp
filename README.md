@@ -641,7 +641,7 @@ public function show() { /* ... */ }
 
 Checks are additive and composed in order: the `global` checks run first, then the route's own, de-duplicated. The first check that returns a response wins, and the rest do not run, so a global `usernotblocked` short-circuits before a route's `postexists` ever fires. A name that is not defined in `checks` throws `InvalidConfigurationException`, so a typo fails closed rather than silently skipping a check.
 
-Checks run at the gate, on every route it guards — including one enforced automatically from its `#[RequiresPayment]` attribute. The `PaymentSpec` they receive has already been through any [price resolvers](#dynamic-pricing), so `$spec->amount` is the price this request will actually be charged, not the route's static one. A check can use that: refuse a purchase above a caller's spending cap, for instance.
+Checks run on every guarded route, however it was declared — middleware arguments, `mpp` plus an attribute, or an attribute enforced automatically. The `PaymentSpec` they receive has already been through any [price resolvers](#dynamic-pricing), so `$spec->amount` is the price this request will actually be charged, not the route's static one. A check can use that: refuse a purchase above a caller's spending cap, for instance.
 
 If a request can only be judged after settlement, you have to refund instead, which is worse for the buyer and rail-specific. Prefer a precondition wherever existence or eligibility can be determined up front.
 

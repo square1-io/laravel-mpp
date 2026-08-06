@@ -119,6 +119,9 @@ abstract class TestCase extends OrchestraTestCase
         // Attribute via explicit `mpp` middleware (no args).
         Route::get('/attr/explicit', [PaidController::class, 'clip'])->middleware('mpp');
 
+        // `mpp` with neither arguments nor an attribute to read: a misconfiguration.
+        Route::get('/attr/missing', fn () => response('OK', 200))->middleware('mpp');
+
         // Attribute auto-enforced by the EnforcePaymentAttributes middleware on a group.
         Route::middleware(EnforcePaymentAttributes::class)->group(function () {
             Route::get('/attr/auto', [PaidController::class, 'clip']);
