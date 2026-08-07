@@ -6,7 +6,7 @@ use Closure;
 use Illuminate\Http\Request;
 use Square1\Mpp\Attributes\RequiresPayment;
 use Square1\Mpp\Exceptions\InvalidConfigurationException;
-use Square1\Mpp\Payment\Concerns\ResolvesNamedCallables;
+use Square1\Mpp\Exceptions\UnpriceableRequestException;
 use Symfony\Component\HttpFoundation\Response;
 
 /**
@@ -33,8 +33,6 @@ use Symfony\Component\HttpFoundation\Response;
  */
 class PaymentPipeline
 {
-    use ResolvesNamedCallables;
-
     public function __construct(
         private readonly SpecResolver $specs,
         private readonly PriceResolver $pricing,
@@ -81,7 +79,7 @@ class PaymentPipeline
         // or a resolver. Asserted before the preconditions run, so a check is
         // always handed a real amount and never has to consider a null one.
         if (! $spec->free && ! $spec->isPriced()) {
-            throw new InvalidConfigurationException($this->noPriceMessage($request, $spec));
+            throw new UnpriceableRequestException($this->noPriceMessage($request, $spec));
         }
 
         if ($response = $this->preconditions->run($request, $spec)) {
@@ -110,19 +108,20 @@ class PaymentPipeline
     {
         $route = trim($request->method().' '.($request->route()?->uri() ?? $request->path()));
 
-        $ran = $this->namedList('mpp.pricing.global', $spec->pricing);
+        // Read from the price resolver rather than rebuilding the list, so the
+        // message can only ever name the resolvers that actually ran.
+        $ran = $this->pricing->namesFor($spec);
 
-        if ($ran === []) {
-            return "No price for route [{$route}]. Give it an amount (e.g. mpp:0.50,USD), set a "
-                .'global default (MPP_DEFAULT_AMOUNT / mpp.defaults.amount), reference a price_book '
-                .'key, use a #[RequiresPayment] attribute, or attach a price resolver with '
-                .'`pricing=` and have it return one.';
-        }
+        $cause = $ran === []
+            ? 'Give it an amount (e.g. mpp:0.50,USD), set a global default (MPP_DEFAULT_AMOUNT / '
+                .'mpp.defaults.amount), reference a price_book key, use a #[RequiresPayment] '
+                .'attribute, or attach a price resolver with `pricing=` and have it return one.'
+            : 'It states no amount, and the price resolver(s) that ran ('.implode(', ', $ran).') '
+                ."all declined by returning null. Return an `['amount' => …]` from one of them, "
+                .'give the route a fallback amount, or — if this request should not be charged at '
+                ."all — return `['free' => true]` rather than null.";
 
-        return "No price for route [{$route}]. It states no amount, and the price resolver(s) that "
-            .'ran ('.implode(', ', $ran).') all declined by returning null. Return an '
-            ."`['amount' => …]` from one of them, give the route a fallback amount, or — if this "
-            ."request should not be charged at all — return `['free' => true]` rather than null.";
+        return "No price for route [{$route}]. {$cause}";
     }
 
     private function requireAttribute(Request $request): RequiresPayment

@@ -251,9 +251,9 @@ class SpecResolver
 
     private function defaultAmount(): ?string
     {
-        $amount = config('mpp.defaults.amount');
-
-        return ($amount === null || $amount === '') ? null : (string) $amount;
+        // build() is the single place that normalises "stated no price" to null,
+        // so this only has to hand back what config holds.
+        return config('mpp.defaults.amount');
     }
 
     private function defaultCurrency(): string

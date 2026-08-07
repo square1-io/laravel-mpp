@@ -1,6 +1,10 @@
 <?php
 
+use Illuminate\Http\Request;
 use Square1\Mpp\Exceptions\InvalidConfigurationException;
+use Square1\Mpp\Exceptions\UnpriceableRequestException;
+use Square1\Mpp\Payment\PaymentGate;
+use Square1\Mpp\Payment\PaymentSpec;
 use Square1\Mpp\Settlement\TempoVerifier;
 use Square1\Mpp\Tests\Fakes\AllowPrecondition;
 use Square1\Mpp\Tests\Fakes\DenyPrecondition;
@@ -109,24 +113,28 @@ it('waives an unpriced route without ever needing an amount', function () {
 it('refuses to serve when the resolver that owns the price declines', function () {
     TieredPricing::$overrides = null;
 
-    $this->withoutExceptionHandling()->get('/price/resolver-owned');
-})->throws(InvalidConfigurationException::class, 'price resolver(s) that ran (tiered) all declined');
+    try {
+        $this->withoutExceptionHandling()->get('/price/resolver-owned');
+        $this->fail('Expected the request to be refused as unpriceable.');
+    } catch (UnpriceableRequestException $e) {
+        expect($e->getMessage())
+            ->toContain('No price for route [GET price/resolver-owned]')  // which route
+            ->toContain('resolver(s) that ran (tiered) all declined')      // and why
+            ->toContain("return `['free' => true]` rather than null");     // and the likely mistake
+    }
+});
 
-it('tells a declining resolver that free is not spelt null', function () {
+it('reports a declined price as a request problem, not a config one', function () {
     TieredPricing::$overrides = null;
 
+    // The config is valid — a resolver is registered and attached. What went
+    // wrong depends on the request, and recurs in production long after deploy.
     $this->withoutExceptionHandling()->get('/price/resolver-owned');
-})->throws(InvalidConfigurationException::class, "return `['free' => true]` rather than null");
-
-it('names the route it could not price', function () {
-    TieredPricing::$overrides = null;
-
-    $this->withoutExceptionHandling()->get('/price/resolver-owned');
-})->throws(InvalidConfigurationException::class, 'No price for route [GET price/resolver-owned]');
+})->throws(UnpriceableRequestException::class);
 
 it('asks for an amount when there is no resolver to have declined', function () {
     $this->withoutExceptionHandling()->get('/price/nothing');
-})->throws(InvalidConfigurationException::class, 'Give it an amount');
+})->throws(UnpriceableRequestException::class, 'Give it an amount');
 
 it('lets a global default price a route whose resolver declines', function () {
     config()->set('mpp.defaults.amount', '7.00');
@@ -150,12 +158,29 @@ it('refuses before the preconditions run, so no check sees an unpriced spec', fu
 
     try {
         $this->withoutExceptionHandling()->get('/price/resolver-owned');
-    } catch (InvalidConfigurationException) {
+    } catch (UnpriceableRequestException) {
         // expected
     }
 
     expect(AllowPrecondition::$calls)->toBe(0);
 });
+
+it('refuses to charge a waived spec handed straight to the gate', function () {
+    // The pipeline serves waived requests itself, so this cannot happen through
+    // a route today. Asserted anyway: "the gate never sees a free spec" is an
+    // assumption about callers, and a second entry path silently breaking that
+    // kind of assumption is the bug this release already had to fix once.
+    $spec = (new PaymentSpec(
+        amount: '5.00',
+        currency: 'USD',
+        grants: 1,
+        scope: 'direct.free',
+        method: 'stripe',
+        offeredMethods: ['stripe'],
+    ))->with(['free' => true]);
+
+    app(PaymentGate::class)->process(Request::create('/x'), fn () => response('SERVED'), $spec);
+})->throws(InvalidConfigurationException::class, 'waived (free) spec reached the payment gate');
 
 it('leaves an unattributed route in an auto-enforced group alone', function () {
     config()->set('mpp.pricing.global', ['tiered']);

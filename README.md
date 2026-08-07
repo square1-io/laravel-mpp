@@ -15,7 +15,7 @@ The package includes two payment rails:
 
 The Laravel middleware, signed challenges, receipts, metered sessions, and storage drivers are designed for production use.
 
-The bundled Stripe rail depends on Stripe Shared Payment Tokens, which currently use preview APIs. Use it for test-mode development, demos, and Stripe-approved pilot or live flows. Expect API shape, Dashboard behavior, and buyer-wallet availability to change while Stripe's agentic-commerce APIs are in preview. Test mode will work globally, but live acceptance is currently gated to US-only companies (June 26).
+The bundled Stripe rail depends on Stripe Shared Payment Tokens, which currently use preview APIs. Use it for test-mode development, demos, and Stripe-approved pilot or live flows. Expect API shape, Dashboard behavior, and buyer-wallet availability to change while Stripe's agentic-commerce APIs are in preview. Test mode will work globally, but live acceptance is currently gated to North American companies (August 26).
 
 The bundled Tempo rail targets Tempo testnet pathUSD and the stock `mppx` client. Treat it as testnet integration support unless you have a separate mainnet deployment plan.
 
@@ -82,7 +82,7 @@ MPP_CHALLENGE_SECRET=
 
 ## Quickstart
 
-This example uses Stripe test mode, transacting directly with a Shared Payment Token. Test mode works wherever your Stripe account is based. As of June 2026, live acceptance is gated to US-based accounts, including the [Link](https://link.com) buyer wallet, so the test-mode flow below is the broadly supported test path today.
+This example uses Stripe test mode, transacting directly with a Shared Payment Token. Test mode works wherever your Stripe account is based. As of August 2026, live acceptance is gated to North America-based accounts, including the [Link](https://link.com) buyer wallet, so the test-mode flow below is the broadly supported test path today.
 
 Add your Stripe test secret key:
 
@@ -152,7 +152,7 @@ To get a profile id:
 2. Create a profile for your business.
 3. Use the resulting `profile_...` value as `STRIPE_NETWORK_ID`.
 
-Stripe SPT support uses preview APIs. Build against test mode first, pin the Stripe API version, and review Stripe and package changelogs before upgrading. Test mode works wherever your account is based. As of June 2026, live acceptance is limited to US-based Stripe accounts.
+Stripe SPT support uses preview APIs. Build against test mode first, pin the Stripe API version, and review Stripe and package changelogs before upgrading. Test mode works wherever your account is based.
 
 ### Testing Stripe End to End
 
@@ -550,7 +550,7 @@ Which one is yours to choose, per route, by whether you write an amount:
 
 Write the amount when a list price is a real thing your endpoint has — it is then the price for every caller the resolver doesn't recognise, and the price you fall back to if the resolver is later disabled. Leave it out when there is no list price to state, as with usage-based or per-item pricing, rather than inventing a placeholder that nothing reads.
 
-On a resolver-owned route, if every resolver declines, the request cannot be priced and raises `InvalidConfigurationException` naming the route and the resolvers that ran. That is the same fail-closed stance as an unknown resolver name or a zero amount: a resolver that owns pricing and returns nothing is a bug, not a free pass.
+On a resolver-owned route, if every resolver declines, the request cannot be priced and raises `UnpriceableRequestException`, naming the route and the resolvers that ran. That is the same fail-closed stance as an unknown resolver name or a zero amount: a resolver that owns pricing and returns nothing is a bug, not a free pass. It is a distinct exception from `InvalidConfigurationException` on purpose — the configuration is fine, and what went wrong depends on the request, so it can recur in production long after a deploy rather than surfacing once at boot.
 
 If `mpp.defaults.amount` is set, every route has a house price and this case can't arise — a declining resolver simply falls back to it.
 

@@ -6,6 +6,7 @@ use Closure;
 use Illuminate\Contracts\Cache\Factory as CacheFactory;
 use Illuminate\Contracts\Cache\LockTimeoutException;
 use Illuminate\Http\Request;
+use Square1\Mpp\Exceptions\InvalidConfigurationException;
 use Square1\Mpp\Metering\Session;
 use Square1\Mpp\Metering\SessionHeader;
 use Square1\Mpp\Metering\SessionStore;
@@ -53,6 +54,18 @@ class PaymentGate
 
     public function process(Request $request, Closure $next, PaymentSpec $spec): Response
     {
+        // The pipeline serves a waived request itself and never routes one here,
+        // so this cannot fire today. It stays because "never sees a free spec" is
+        // an assumption about a caller, and the last time this package assumed
+        // something about its callers, a second entry path quietly broke it. If a
+        // future caller does hand us one, charging it is the worst outcome.
+        if ($spec->free) {
+            throw new InvalidConfigurationException(
+                "A waived (free) spec reached the payment gate for scope '{$spec->scope}'. "
+                .'Free requests are served by the PaymentPipeline and must not be charged.'
+            );
+        }
+
         // Fail fast on a misconfigured rail before anything is minted, so a
         // missing required setting surfaces on the first request rather than as
         // a confusing settlement failure later (recommended-but-absent settings

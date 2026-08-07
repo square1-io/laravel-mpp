@@ -39,9 +39,24 @@ class PriceResolver
      */
     private array $warned = [];
 
+    /**
+     * The resolvers that apply to this spec, in the order they run: the global
+     * list first, then the route's own, de-duplicated.
+     *
+     * Public because the pipeline names them when it has to report that nothing
+     * priced a request. That message has to describe what actually ran, so both
+     * callers read the set from here rather than each rebuilding it.
+     *
+     * @return list<string>
+     */
+    public function namesFor(PaymentSpec $spec): array
+    {
+        return $this->namedList('mpp.pricing.global', $spec->pricing);
+    }
+
     public function apply(Request $request, PaymentSpec $spec): PaymentSpec
     {
-        $names = $this->namedList('mpp.pricing.global', $spec->pricing);
+        $names = $this->namesFor($spec);
 
         if ($names === []) {
             return $spec;
