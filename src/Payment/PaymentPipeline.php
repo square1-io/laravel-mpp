@@ -6,6 +6,7 @@ use Closure;
 use Illuminate\Http\Request;
 use Square1\Mpp\Attributes\RequiresPayment;
 use Square1\Mpp\Exceptions\InvalidConfigurationException;
+use Square1\Mpp\Payment\Concerns\ResolvesNamedCallables;
 use Symfony\Component\HttpFoundation\Response;
 
 /**
@@ -32,6 +33,8 @@ use Symfony\Component\HttpFoundation\Response;
  */
 class PaymentPipeline
 {
+    use ResolvesNamedCallables;
+
     public function __construct(
         private readonly SpecResolver $specs,
         private readonly PriceResolver $pricing,
@@ -74,6 +77,13 @@ class PaymentPipeline
         // signed challenge — settlement always verifies against that challenge.
         $spec = $this->pricing->apply($request, $spec);
 
+        // Someone has to have named a price by now — the route, a global default,
+        // or a resolver. Asserted before the preconditions run, so a check is
+        // always handed a real amount and never has to consider a null one.
+        if (! $spec->free && ! $spec->isPriced()) {
+            throw new InvalidConfigurationException($this->noPriceMessage($request, $spec));
+        }
+
         if ($response = $this->preconditions->run($request, $spec)) {
             return $response;
         }
@@ -85,6 +95,34 @@ class PaymentPipeline
         }
 
         return $this->gate->process($request, $next, $spec);
+    }
+
+    /**
+     * Two different mistakes land here, so the message names which one it is.
+     *
+     * With no resolvers, the route simply never stated a price. With resolvers,
+     * they all declined — which usually means one of them meant to waive the
+     * charge and returned null for it. Null is "no opinion"; waiving is
+     * `['free' => true]`, and the distinction matters most on exactly this kind
+     * of route, where nothing else supplies a price to fall back on.
+     */
+    private function noPriceMessage(Request $request, PaymentSpec $spec): string
+    {
+        $route = trim($request->method().' '.($request->route()?->uri() ?? $request->path()));
+
+        $ran = $this->namedList('mpp.pricing.global', $spec->pricing);
+
+        if ($ran === []) {
+            return "No price for route [{$route}]. Give it an amount (e.g. mpp:0.50,USD), set a "
+                .'global default (MPP_DEFAULT_AMOUNT / mpp.defaults.amount), reference a price_book '
+                .'key, use a #[RequiresPayment] attribute, or attach a price resolver with '
+                .'`pricing=` and have it return one.';
+        }
+
+        return "No price for route [{$route}]. It states no amount, and the price resolver(s) that "
+            .'ran ('.implode(', ', $ran).') all declined by returning null. Return an '
+            ."`['amount' => …]` from one of them, give the route a fallback amount, or — if this "
+            ."request should not be charged at all — return `['free' => true]` rather than null.";
     }
 
     private function requireAttribute(Request $request): RequiresPayment

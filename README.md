@@ -518,6 +518,8 @@ class TieredPrice
 Attach it like any other option:
 
 ```php
+// $5 is the LIST PRICE — what a caller pays when `tiered` returns null.
+// Recognised tiers are discounts off it.
 Route::get('/report', ReportController::class)
     ->middleware('mpp:5.00,USD,scope=report,pricing=tiered');
 
@@ -532,9 +534,29 @@ public function show() { /* ... */ }
 ],
 ```
 
-The route still declares an amount. That is the price for callers the resolver declines to reprice (returning `null`), so an endpoint always has a price even if the resolver is dormant or a tier is unhandled.
+### Who Owns the Price
+
+One rule: **something has to supply a price before the gate — the route or a resolver.**
+
+Which one is yours to choose, per route, by whether you write an amount:
+
+```php
+// The route owns the price; the resolver discounts it. `null` means "no discount".
+->middleware('mpp:5.00,USD,scope=report,pricing=tiered');
+
+// The resolver owns the price. Nothing to keep in sync, nothing to go stale.
+->middleware('mpp:scope=report,pricing=tiered');
+```
+
+Write the amount when a list price is a real thing your endpoint has — it is then the price for every caller the resolver doesn't recognise, and the price you fall back to if the resolver is later disabled. Leave it out when there is no list price to state, as with usage-based or per-item pricing, rather than inventing a placeholder that nothing reads.
+
+On a resolver-owned route, if every resolver declines, the request cannot be priced and raises `InvalidConfigurationException` naming the route and the resolvers that ran. That is the same fail-closed stance as an unknown resolver name or a zero amount: a resolver that owns pricing and returns nothing is a bug, not a free pass.
+
+If `mpp.defaults.amount` is set, every route has a house price and this case can't arise — a declining resolver simply falls back to it.
 
 ### What a Resolver May Change
+
+A resolver is a plain class with one method. There is no base class to extend and no special casing: you return an array and the package reads it. One return can set any of these together — it is not limited to the amount.
 
 | Key | Effect |
 | --- | --- |
@@ -554,6 +576,43 @@ return ['amount' => '0'];   // throws
 ```
 
 so a resolver that miscalculates, or reads an empty config value, fails loudly instead of quietly making a paid endpoint free. `free => true` and an `amount` together throw for the same reason: which one you meant should never be a guess. A free request skips the challenge, the session, and the receipt entirely — it is served like an unguarded route — but its preconditions still run, so a free caller cannot reach a resource a check would have refused them.
+
+Every shape from one method, on a route declaring `mpp:9.00,USD,grants=3,scope=everything.list`:
+
+```php
+public function price(Request $request, PaymentSpec $spec): ?array
+{
+    return match ($request->user()?->tier) {
+
+        // Just the price. Everything else on the route stands.
+        'pro' => ['amount' => '2.00'],
+
+        // Price, currency, bundle size and credit pool, all at once.
+        'partner' => [
+            'amount' => '18.00',
+            'currency' => 'EUR',
+            'grants' => 25,
+            'scope' => 'everything.partner',
+        ],
+
+        // No charge. Same method, same return type — `free` is just another key.
+        // No 'amount' alongside it: the pair throws.
+        'staff' => ['free' => true],
+
+        // No opinion. NOT free: the route's own price stands.
+        default => null,
+    };
+}
+```
+
+| Caller | Result |
+| --- | --- |
+| unrecognised (`null`) | `402` — 9.00 USD, grants 3, scope `everything.list` |
+| `pro` | `402` — 2.00 USD, grants 3, scope `everything.list` |
+| `partner` | `402` — 18.00 EUR, grants 25, scope `everything.partner` |
+| `staff` | `200` — served, no challenge |
+
+The distinction to hold on to: **`null` is "no opinion", not "no charge".** Waiving is always `['free' => true]`. On a route that states no price of its own, that difference decides between a served request and an exception.
 
 ### Composition
 

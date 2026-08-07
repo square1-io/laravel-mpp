@@ -266,11 +266,19 @@ return [
     | in order and de-duplicated, each seeing the result of the last. An unknown
     | name throws, so a typo can never silently fall back to the static price.
     |
-    | The route's own amount stays REQUIRED: it is the fallback for when a
-    | resolver returns null. The price a buyer pays is the one bound into the
-    | signed 402 — settlement verifies against the stored challenge, never a
-    | re-resolved spec — so a resolver whose answer changes between the 402 and
-    | the paid retry cannot alter what that buyer was quoted.
+    | Something must supply a price before the gate: the route, the global
+    | default above, or a resolver. Declare an amount on the route when a list
+    | price is real — it is what unrecognised callers pay, and the fallback if a
+    | resolver is disabled. Omit it (`mpp:scope=report,pricing=tiered`) when there
+    | is no list price to state, and the resolvers own it; if they all decline
+    | then, the request throws rather than being served.
+    |
+    | Note `null` means "no opinion", NOT "no charge". Waiving is `free => true`.
+    |
+    | The price a buyer pays is the one bound into the signed 402 — settlement
+    | verifies against the stored challenge, never a re-resolved spec — so a
+    | resolver whose answer changes between the 402 and the paid retry cannot
+    | alter what that buyer was quoted.
     |
     */
     'pricing' => [

@@ -29,6 +29,15 @@ internal and may change in a minor release.
 - Overridable keys: `amount`, `currency`, `grants`, `scope`, and `free`. Anything
   else throws, including `method` / `methods` — a resolver sets the price, not the
   payment terms around it.
+- **Resolver-owned pricing.** A route may now state no amount at all and leave
+  pricing entirely to its resolvers (`mpp:scope=report,pricing=tiered`), instead
+  of being forced to declare a placeholder that nothing reads. One rule decides
+  it: something must supply a price before the gate — the route, a global
+  default, or a resolver. If a route states none and every resolver declines, the
+  request raises `InvalidConfigurationException` naming the route and the
+  resolvers that ran, rather than being served or silently priced at zero.
+  Declaring an amount is still the right choice where a list price is real: it is
+  what unrecognised callers pay, and the fallback if a resolver is later disabled.
 - **Free requests.** A resolver returning `['free' => true]` serves the route with
   no challenge, session, or receipt. It must be said explicitly: a zero, negative,
   or unparseable `amount` throws instead of quietly giving the resource away, as
@@ -65,6 +74,14 @@ internal and may change in a minor release.
 - Internal: `PreconditionRunner`, `PriceResolver`, and a shared
   `ResolvesNamedCallables` trait extracted; `PaymentGate`'s constructor is
   unchanged from 1.1.0.
+- `PaymentSpec::$amount` is now `?string`, null while a route is waiting on its
+  resolvers, with a new `isPriced()` alongside it. **Price resolvers** may
+  therefore be handed a null amount — one that computes a percentage off
+  `$spec->amount` should handle it. **Precondition checks are unaffected**: the
+  price assertion runs before them, so a check is always given a real amount.
+- The "needs an amount" error moved out of `SpecResolver` and into the pipeline,
+  which is the only place that knows whether resolvers ran and declined. Its two
+  old messages are replaced by one that names the route.
 
 ### Upgrading
 

@@ -122,6 +122,15 @@ abstract class TestCase extends OrchestraTestCase
         // `mpp` with neither arguments nor an attribute to read: a misconfiguration.
         Route::get('/attr/missing', fn () => response('OK', 200))->middleware('mpp');
 
+        // Resolver-owned pricing: the route states no amount at all and leaves it
+        // to `tiered`. Unpriced until a resolver says otherwise.
+        Route::get('/price/resolver-owned', fn () => response('OWNED', 200))
+            ->middleware('mpp:scope=price.owned,pricing=tiered');
+
+        // No amount and no resolver either: nothing can ever price this.
+        Route::get('/price/nothing', fn () => response('NOTHING', 200))
+            ->middleware('mpp:scope=price.nothing');
+
         // Attribute auto-enforced by the EnforcePaymentAttributes middleware on a group.
         Route::middleware(EnforcePaymentAttributes::class)->group(function () {
             Route::get('/attr/auto', [PaidController::class, 'clip']);

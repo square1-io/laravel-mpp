@@ -4,7 +4,6 @@ namespace Square1\Mpp\Payment;
 
 use Illuminate\Http\Request;
 use Square1\Mpp\Attributes\RequiresPayment;
-use Square1\Mpp\Exceptions\InvalidConfigurationException;
 
 /**
  * Builds a PaymentSpec from either middleware arguments or a #[RequiresPayment]
@@ -25,7 +24,8 @@ class SpecResolver
             $options = $this->parseOptions(array_slice($args, 1));
 
             return $this->build(
-                (string) $entry['amount'],
+                // A book entry may omit the amount too, if it carries resolvers.
+                $entry['amount'] ?? $this->defaultAmount(),
                 strtoupper($entry['currency'] ?? $this->defaultCurrency()),
                 (int) ($options['grants'] ?? $entry['grants'] ?? $this->defaultGrants()),
                 $options['scope'] ?? $args[0],
@@ -51,21 +51,16 @@ class SpecResolver
         }
 
         $options = $this->parseOptions(array_slice($args, count($positional)));
-        $amount = $positional[0] ?? $this->defaultAmount();
 
-        if ($amount === null || $amount === '') {
-            throw new InvalidConfigurationException(
-                'The mpp middleware needs an amount: give one inline (e.g. mpp:0.50,USD), set a '
-                .'global default (MPP_DEFAULT_AMOUNT / mpp.defaults.amount), reference a price_book '
-                .'key, or use a #[RequiresPayment] attribute.'
-            );
-        }
+        // May be null: a route can leave pricing entirely to its resolvers. The
+        // pipeline is what insists a price exists, once they have had their say.
+        $amount = $positional[0] ?? $this->defaultAmount();
 
         // A per-route override: `methods=stripe|other` (pipe-separated, ordered).
         $methods = $this->parseNamedList($options, 'methods') ?: null;
 
         return $this->build(
-            (string) $amount,
+            $amount,
             strtoupper($positional[1] ?? $this->defaultCurrency()),
             (int) ($options['grants'] ?? $this->defaultGrants()),
             $options['scope'] ?? null,
@@ -79,17 +74,11 @@ class SpecResolver
 
     public function fromAttribute(RequiresPayment $attribute, Request $request): PaymentSpec
     {
+        // Null is allowed here too — see fromMiddlewareArgs.
         $amount = $attribute->amount ?? $this->defaultAmount();
 
-        if ($amount === null || $amount === '') {
-            throw new InvalidConfigurationException(
-                'A #[RequiresPayment] attribute needs an amount, or a global default '
-                .'(MPP_DEFAULT_AMOUNT / mpp.defaults.amount).'
-            );
-        }
-
         return $this->build(
-            (string) $amount,
+            $amount,
             strtoupper($attribute->currency ?? $this->defaultCurrency()),
             $attribute->grants ?? $this->defaultGrants(),
             $attribute->scope,
@@ -106,8 +95,11 @@ class SpecResolver
      * @param  list<string>  $preconditions  named precondition checks to run for this route (in order)
      * @param  list<string>  $pricing  named price resolvers to apply for this route (in order)
      */
-    private function build(string $amount, string $currency, int $grants, ?string $scope, ?string $method, Request $request, ?array $methods = null, array $preconditions = [], array $pricing = []): PaymentSpec
+    private function build(string|float|null $amount, string $currency, int $grants, ?string $scope, ?string $method, Request $request, ?array $methods = null, array $preconditions = [], array $pricing = []): PaymentSpec
     {
+        // Normalise "stated no price" to null; everything downstream tests for it.
+        $amount = ($amount === null || $amount === '') ? null : (string) $amount;
+
         $offered = $this->resolveOfferedMethods($method, $methods);
         $primary = $offered[0];
         $methodConfig = config("mpp.methods.{$primary}", []);

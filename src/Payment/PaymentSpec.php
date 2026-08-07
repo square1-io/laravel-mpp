@@ -26,6 +26,10 @@ final class PaymentSpec
     private const OVERRIDABLE = ['amount', 'currency', 'grants', 'scope', 'free'];
 
     /**
+     * @param  ?string  $amount  null when the route states no price and leaves it entirely to
+     *                           its resolvers. Resolved before the spec reaches the gate: a
+     *                           chargeable spec always has an amount by then, so only a price
+     *                           resolver can ever be handed a null one.
      * @param  list<string>  $paymentMethodTypes  the PRIMARY method's payment method types
      * @param  list<string>  $offeredMethods  ordered set of offered method names (primary first)
      * @param  list<string>  $preconditions  named precondition checks to run before a challenge is minted or settled
@@ -33,7 +37,7 @@ final class PaymentSpec
      * @param  bool  $free  when true the gate serves the route without charging (set only by a resolver returning `free => true`)
      */
     public function __construct(
-        public readonly string $amount,
+        public readonly ?string $amount,
         public readonly string $currency,
         public readonly int $grants,
         public readonly string $scope,
@@ -49,6 +53,16 @@ final class PaymentSpec
     public function isMetered(): bool
     {
         return $this->grants > 1;
+    }
+
+    /**
+     * Has anything set a price yet — the route itself, a global default, or a
+     * resolver? A spec that is still unpriced once its resolvers have run, and
+     * was not waived, cannot be charged for and never reaches the gate.
+     */
+    public function isPriced(): bool
+    {
+        return $this->amount !== null;
     }
 
     /**
@@ -124,7 +138,7 @@ final class PaymentSpec
     /**
      * @param  array<string, mixed>  $overrides
      */
-    private function overrideAmount(array $overrides): string
+    private function overrideAmount(array $overrides): ?string
     {
         if (! array_key_exists('amount', $overrides)) {
             return $this->amount;
@@ -205,6 +219,16 @@ final class PaymentSpec
      */
     public function toChallengeSpec(): array
     {
+        // The pipeline refuses an unpriced spec long before this, so this cannot
+        // fire in normal operation. It stays because the alternative to catching
+        // a broken invariant here is minting a signed challenge for an empty
+        // amount, and a money path should not degrade quietly.
+        if (! $this->isPriced()) {
+            throw new InvalidConfigurationException(
+                "Cannot mint a challenge for scope '{$this->scope}': the spec has no amount."
+            );
+        }
+
         $offers = [];
         foreach ($this->offeredMethods as $method) {
             if ($method === $this->method) {
