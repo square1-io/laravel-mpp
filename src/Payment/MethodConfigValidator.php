@@ -82,7 +82,7 @@ class MethodConfigValidator
             "The '%s' rail speaks the mppx wire dialect and can't be co-offered with native rails "
             ."in one 402 (this route offers: %s). A 402 carries a single dialect, so make '%s' the "
             .'sole/primary method (e.g. method=%s, or default_method=%s), or choose the rail per '
-            .'request. See "Offering several rails at once" in the README.',
+            .'request before the middleware runs. See "Can One Route Offer Both Rails?" in the README.',
             $mppx[0],
             implode('|', $offered),
             $mppx[0],

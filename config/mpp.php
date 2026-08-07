@@ -33,33 +33,17 @@ return [
     | Default (primary) settlement method
     |--------------------------------------------------------------------------
     |
-    | The primary method, used for ordering and for single-method back-compat:
-    | when a challenge offers exactly one method, its wire shape is identical to
-    | a pre-multi-rail challenge. It must be one of the `methods` keys below.
+    | The rail a route settles over unless it names its own with `method=` on the
+    | middleware or `method:` on the #[RequiresPayment] attribute. It must be one
+    | of the `methods` keys below.
+    |
+    | A 402 quotes one rail. The two shipped rails speak different wire formats,
+    | so a single challenge cannot offer both — to serve both from one URL, pick
+    | the rail per request before the middleware runs. See "Can One Route Offer
+    | Both Rails?" in the README.
     |
     */
     'default_method' => env('MPP_DEFAULT_METHOD', 'stripe'),
-
-    /*
-    |--------------------------------------------------------------------------
-    | Offered methods (multi-rail)
-    |--------------------------------------------------------------------------
-    |
-    | The ordered set of native-dialect settlement methods a challenge offers by
-    | default, as an array of `methods` keys. A native challenge emits one signed
-    | `accepts[]` entry per offered method (each independently signed for THAT
-    | method), and a client picks the first it can satisfy.
-    |
-    | Leave this null/unset to offer just the `default_method` — which keeps the
-    | single-method wire shape byte-identical to before. Set it to offer several
-    | native rails at once. Tempo speaks the separate mppx dialect and must be
-    | selected as the primary/single method with `method=tempo` or
-    | `default_method=tempo`. A route can override native offers per-request via
-    | the middleware (`mpp:0.50,USD,methods=stripe|other`) or the
-    | #[RequiresPayment(methods: ['stripe', 'other'])] attribute.
-    |
-    */
-    'accept' => null, // e.g. ['stripe', 'other-native-rail']
 
     /*
     |--------------------------------------------------------------------------
@@ -72,7 +56,7 @@ return [
     | (or a bare attribute) instead of repeating the amount on every route.
     | Leave `amount` null to keep an explicit price mandatory per route (the
     | default: nothing changes unless you set one). The method/network defaults
-    | already live in `default_method` / `accept` / `methods.*` above.
+    | already live in `default_method` / `methods.*` above.
     |
     */
     'defaults' => [
@@ -98,8 +82,9 @@ return [
     |      synchronous API call you initiate), implement a
     |      Square1\Mpp\Settlement\SettlementChecker and reuse the matching logic
     |      pattern in TempoVerifier.
-    |   2. Add a `methods.<name>` block here with at least a `verifier`, and list
-    |      `<name>` in `accept` (above) to offer it.
+    |   2. Add a `methods.<name>` block here with at least a `verifier`. Use it on
+    |      a route with `method=<name>`, or make it the house rail with
+    |      `default_method` (above).
     | Nothing in the native protocol layer needs to change.
     |
     | VALIDATION: the gate checks a rail's config the first time a route offers it
