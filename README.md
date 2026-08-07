@@ -15,7 +15,7 @@ The package includes two payment rails:
 
 The Laravel middleware, signed challenges, receipts, metered sessions, and storage drivers are designed for production use.
 
-The bundled Stripe rail depends on Stripe Shared Payment Tokens, which currently use preview APIs. Use it for test-mode development, demos, and Stripe-approved pilot or live flows. Expect API shape, Dashboard behavior, and buyer-wallet availability to change while Stripe's agentic-commerce APIs are in preview. Test mode will work globally, but live acceptance is currently gated to US-only companies (June 26).
+The bundled Stripe rail depends on Stripe Shared Payment Tokens, which currently use preview APIs. Use it for test-mode development, demos, and Stripe-approved pilot or live flows. Expect API shape, Dashboard behavior, and buyer-wallet availability to change while Stripe's agentic-commerce APIs are in preview. Test mode will work globally, but live acceptance is currently gated to North American companies (August 26).
 
 The bundled Tempo rail targets Tempo testnet pathUSD and the stock `mppx` client. Treat it as testnet integration support unless you have a separate mainnet deployment plan.
 
@@ -40,12 +40,15 @@ For a real-world demo, see [PayForGoals.com](https://www.payforgoals.com).
 - [Choose a Payment Rail](#choose-a-payment-rail)
 - [Protecting Routes](#protecting-routes)
 - [Metered Access](#metered-access)
+- [Dynamic Pricing](#dynamic-pricing)
 - [Preconditions](#preconditions)
 - [Session Storage](#session-storage)
 - [Configuration](#configuration)
 - [Testing](#testing)
 - [Advanced Usage](#advanced-usage)
 - [License](#license)
+
+Release history, and anything to watch when upgrading, is in [CHANGELOG.md](CHANGELOG.md).
 
 ## Installation
 
@@ -79,7 +82,7 @@ MPP_CHALLENGE_SECRET=
 
 ## Quickstart
 
-This example uses Stripe test mode, transacting directly with a Shared Payment Token. Test mode works wherever your Stripe account is based. As of June 2026, live acceptance is gated to US-based accounts, including the [Link](https://link.com) buyer wallet, so the test-mode flow below is the broadly supported test path today.
+This example uses Stripe test mode, transacting directly with a Shared Payment Token. Test mode works wherever your Stripe account is based. As of August 2026, live acceptance is gated to North America-based accounts, including the [Link](https://link.com) buyer wallet, so the test-mode flow below is the broadly supported test path today.
 
 Add your Stripe test secret key:
 
@@ -149,7 +152,7 @@ To get a profile id:
 2. Create a profile for your business.
 3. Use the resulting `profile_...` value as `STRIPE_NETWORK_ID`.
 
-Stripe SPT support uses preview APIs. Build against test mode first, pin the Stripe API version, and review Stripe and package changelogs before upgrading. Test mode works wherever your account is based. As of June 2026, live acceptance is limited to US-based Stripe accounts.
+Stripe SPT support uses preview APIs. Build against test mode first, pin the Stripe API version, and review Stripe and package changelogs before upgrading. Test mode works wherever your account is based.
 
 ### Testing Stripe End to End
 
@@ -191,7 +194,7 @@ curl -s https://your-host/resource
 }
 ```
 
-Mint a test SPT for a $1.00 challenge:
+Mint a test SPT for a \$1.00 challenge:
 
 ```bash
 curl -s -u "sk_test_buyer_...:" -H "Stripe-Version: 2026-05-27.preview" \
@@ -230,7 +233,7 @@ Payment-Receipt: id="rcpt_...", challengeId="chal_...", method="stripe", amount=
 
 The `ref` value is the Stripe PaymentIntent id.
 
-Cards have minimum charge amounts, often around $0.50 or EUR 0.50. Price card-backed routes above the minimum, or use a metered bundle where the single charge clears it.
+Cards have minimum charge amounts, often around \$0.50 or EUR 0.50. Price card-backed routes above the minimum, or use a metered bundle where the single charge clears it.
 
 ### Per-Payer Stripe Customers
 
@@ -342,7 +345,60 @@ https://explore.testnet.tempo.xyz/address/0x...
 
 Replace `0x...` with the address you set as `TEMPO_RECIPIENT`. The explorer should show the incoming pathUSD transfer after the transaction is mined.
 
-Tempo uses the mppx wire format. It cannot be co-offered in the same `402` challenge as Stripe. To support both rails on the same URL, choose the rail per request. See [Stripe and Tempo on One Route](#stripe-and-tempo-on-one-route).
+Tempo uses the mppx wire format, which a `402` cannot carry at the same time as Stripe's. To serve both rails from one URL, choose the rail per request - see [Can One Route Offer Both Rails?](#can-one-route-offer-both-rails).
+
+### Can One Route Offer Both Rails?
+
+Not in a single `402` unfortunatey.
+
+A `402` is a quote. It has to state a price in something the caller can actually pay, and the two rails state that in different places. Stripe uses the native format: the response body carries a list of signed offers. Tempo speaks mppx, where the terms are a signed blob in the `WWW-Authenticate` header and the body carries no offer list at all. One HTTP response has one body and one set of headers, so it can speak one format or the other. An agent that understands Stripe finds nothing actionable in a Tempo challenge, and an mppx agent finds nothing actionable in a Stripe one.
+
+So the decision of which rail to quote happens **before** the challenge is minted, which means the server has to know something about the caller first.
+
+That is content negotiation, and the web has solved it before. When WebP was new, servers could not tell which browsers could decode it, so browsers began sending `Accept: image/webp` and servers used that to choose a representation. Identical shape of problem: the server must commit to one format up front, and only the client knows what it can consume.
+
+There is no standard header for payment-rail capability yet. Until there is, define one for your API and document it for the agents that call you:
+
+```http
+GET /resource HTTP/1.1
+X-Supports: tempo, stripe
+```
+
+Then choose the rail before handing off to the MPP middleware:
+
+```php
+namespace App\Http\Middleware;
+
+use Closure;
+use Illuminate\Http\Request;
+use Square1\Mpp\Http\Middleware\RequirePayment;
+use Symfony\Component\HttpFoundation\Response;
+
+class ChooseRail
+{
+    public function __construct(private readonly RequirePayment $mpp) {}
+
+    public function handle(Request $request, Closure $next): Response
+    {
+        $supports = array_map('trim', explode(',', (string) $request->header('X-Supports')));
+
+        // Quote the first rail we both understand; fall back to the house default.
+        $spec = in_array('tempo', $supports, true)
+            ? '0.01,USD,method=tempo,scope=resource'
+            : '0.50,USD,method=stripe,scope=resource';
+
+        return $this->mpp->handle($request, $next, ...explode(',', $spec));
+    }
+}
+```
+
+```php
+Route::get('/resource', MyPaidResource::class)
+    ->middleware(\App\Http\Middleware\ChooseRail::class);
+```
+
+A caller that sends nothing gets your default rail. Each challenge is bound to the rail it was minted for, so switching rails always means a fresh quote, which the package enforces for you.
+
 
 ## Protecting Routes
 
@@ -410,8 +466,9 @@ Automatic enforcement is disabled by default. It runs on the configured route gr
 | One charge per request | `grants=1` | `grants: 1` |
 | One charge for N accesses | `grants=10` | `grants: 10` |
 | Scope | `scope=report.basic` | `scope: 'report.basic'` |
-| Single method | `method=tempo` | `method: 'tempo'` |
-| Multiple native methods | `methods=stripe\|acme` | `methods: ['stripe', 'acme']` |
+| Settlement rail | `method=tempo` | `method: 'tempo'` |
+| Price per request | `pricing=tiered` | `pricing: ['tiered']` |
+| Preconditions | `preconditions=postexists` | `preconditions: ['postexists']` |
 
 `scope` is a label you choose for the priced resource. Metered sessions are locked to their scope. If you omit it, the package derives one from the route URI.
 
@@ -471,6 +528,179 @@ Session spends are scope-checked and atomic. Concurrent requests cannot spend mo
 
 Metering works the same on both rails. A Tempo payment for a metered route also issues a session, reused with the same `Authorization: Payment ..., session="sess_..."` header shown above.
 
+## Dynamic Pricing
+
+Everything above prices a route. Sometimes the price belongs to the *request*: a pro account pays \$2.50 where a free account pays \$5.00, a partner gets a bigger bundle for the same money, a caller in another region pays in another currency.
+
+A price resolver decides that per request. Register it once, name it on the routes it applies to, and the resolved price is what gets minted into the `402`:
+
+```php
+// config/mpp.php
+'pricing' => [
+    'resolvers' => [
+        'tiered' => [\App\Mpp\Pricing\TieredPrice::class, 'price'],
+    ],
+
+    // Apply to every gated route, before any route-specific resolvers.
+    'global' => [],
+],
+```
+
+```php
+namespace App\Mpp\Pricing;
+
+use Illuminate\Http\Request;
+use Square1\Mpp\Payment\PaymentSpec;
+
+class TieredPrice
+{
+    /** @return array<string, mixed>|null */
+    public function price(Request $request, PaymentSpec $spec): ?array
+    {
+        return match ($request->user()?->tier) {
+            'pro'     => ['amount' => '2.00'],
+            'partner' => ['amount' => '2.00', 'grants' => 20, 'scope' => 'report.partner'],
+            'staff'   => ['free' => true],
+            default   => null,   // leave the route's own price alone
+        };
+    }
+}
+```
+
+Attach it like any other option:
+
+```php
+// $5 is the LIST PRICE - what a caller pays when `tiered` returns null.
+// Recognised tiers are discounts off it.
+Route::get('/report', ReportController::class)
+    ->middleware('mpp:5.00,USD,scope=report,pricing=tiered');
+
+#[RequiresPayment(amount: '5.00', scope: 'report', pricing: ['tiered'])]
+public function show() { /* ... */ }
+```
+
+```php
+// Or on a price_book entry, so every route using the entry inherits it.
+'price_book' => [
+    'report.basic' => ['amount' => '5.00', 'currency' => 'USD', 'pricing' => ['tiered']],
+],
+```
+
+### Who Owns the Price
+
+One rule: **something has to supply a price before the gate - the route or a resolver.**
+
+Which one is yours to choose, per route, by whether you write an amount:
+
+```php
+// The route owns the default price; the custom resolver may overwrite it.
+->middleware('mpp:5.00,USD,scope=report,pricing=tiered');
+
+// The resolver fully owns responsibility for the price.
+->middleware('mpp:scope=report,pricing=tiered');
+```
+
+Write the amount when a list price is a real thing your endpoint has. It is then the price for every caller the resolver doesn't recognise, and the price you fall back to if the resolver is later disabled. Leave it out when there is no list price to state, as with usage-based or per-item pricing, rather than inventing a placeholder that nothing reads.
+
+On a resolver-owned route, if every resolver declines, the request cannot be priced and raises `UnpriceableRequestException`, naming the route and the resolvers that ran. It is a distinct exception from `InvalidConfigurationException` on purpose. The configuration is fine, and what went wrong depends on the request, so it can recur in production long after a deploy rather than surfacing once at boot.
+
+If `mpp.defaults.amount` is set, every route has a house price and this case can't arise. In this case, a declining resolver falls back to this default.
+
+### What a Resolver May Change
+
+A resolver is a plain class with one method. There is no base class to extend and no special casing: you return an array and the package reads it. One return can set any of these together - it is not limited to the amount.
+
+| Key | Effect |
+| --- | --- |
+| `amount` | The price. Must be a positive number. |
+| `currency` | The currency code, upper-cased for you. |
+| `grants` | Accesses per payment. `> 1` issues a metered session. |
+| `scope` | The label the payment and any session are bound to. |
+| `free` | `true` serves the route without charging. |
+
+Anything else - including `method` - throws `InvalidConfigurationException`. Which rail a route uses is resolved once, from the route's own `method=` and the configured default, and is not a resolver's to change: a resolver sets the price, not the payment terms around it. To vary the rail per request, choose it before the middleware runs - see [Can One Route Offer Both Rails?](#can-one-route-offer-both-rails).
+
+A zero, negative, or non-numeric `amount` also throws. Giving a resource away has to be confirmed very explicitly, so a resolver that miscalculates, or reads an empty config value, fails loudly instead of quietly making a paid endpoint free.
+
+```php
+return ['free' => true];    // yes, serve this one for nothing
+return ['amount' => '0'];   // throws
+```
+ `free => true` and an `amount` together throw for the same reason: which one you meant should never be a guess. A free request skips the challenge, the session, and the receipt entirely - it is served like an unguarded route - but its preconditions still run, so a free caller cannot reach a resource a check would have refused them.
+
+Every shape from one method, on a route declaring `mpp:9.00,USD,grants=3,scope=everything.list`:
+
+```php
+public function price(Request $request, PaymentSpec $spec): ?array
+{
+    return match ($request->user()?->tier) {
+
+        // Just the price. Everything else on the route stands.
+        'pro' => ['amount' => '2.00'],
+
+        // Price, currency, bundle size and credit pool, all at once.
+        'partner' => [
+            'amount' => '18.00',
+            'currency' => 'EUR',
+            'grants' => 25,
+            'scope' => 'everything.partner',
+        ],
+
+        // No charge. Same method, same return type - `free` is just another key.
+        // No 'amount' alongside it: the pair throws.
+        'staff' => ['free' => true],
+
+        // No opinion. NOT free: the route's own price stands.
+        default => null,
+    };
+}
+```
+
+| Caller | Result |
+| --- | --- |
+| unrecognised (`null`) | `402` - 9.00 USD, grants 3, scope `everything.list` |
+| `pro` | `402` - 2.00 USD, grants 3, scope `everything.list` |
+| `partner` | `402` - 18.00 EUR, grants 25, scope `everything.partner` |
+| `staff` | `200` - served, no challenge |
+
+The distinction to hold on to: **`null` is "no opinion", not "no charge".** Waiving is always `['free' => true]`. On a route that states no price of its own, that difference decides between a served request and an exception.
+
+### Composition
+
+Resolvers compose like preconditions. Globals run first, then the route's own, in declared order, de-duplicated. Each one receives the spec as the previous one left it, so a later resolver can build on an earlier one:
+
+```php
+->middleware('mpp:5.00,USD,pricing=tiered|regional')
+```
+
+Here `regional` sees the tier-adjusted amount, not the route's default \$5. An unknown name throws rather than falling back to the static price, so a typo can't quietly charge everyone list price.
+
+### Pricing and Metered Sessions
+
+Metered sessions are bound to a **scope**, not to a payer. A session is a bearer credit balance: whoever holds the id can spend it on that scope.
+
+So if a metered route's price varies, vary its `scope` too:
+
+```php
+'partner' => ['amount' => '2.00', 'grants' => 20, 'scope' => 'report.partner'],
+```
+
+Without that, credits bought at \$2 are spendable by any bearer on the same scope, including one who should have paid \$5. The package logs a warning when a resolver reprices a metered route without changing its scope - once per scope per process, so once per request under PHP-FPM and once per worker under Octane. Once-off routes (`grants = 1`) never issue a session and are unaffected.
+
+### The Quote Is Binding
+
+A resolver decides the price of a *challenge*, not of a settlement. The amount is HMAC-signed into the `402` and settlement verifies against that stored challenge - never against a freshly-resolved spec. So a resolver whose answer changes between the `402` and the paid retry cannot change what that buyer was quoted:
+
+```
+402  →  amount="2.00"   (caller was on the pro tier)
+        ... their subscription lapses ...
+retry →  settles at 2.00, receipt says 2.00
+```
+
+The same holds in the other direction: a resolver that turns `free` after issuing a `402` cannot burn or settle that challenge, and a resolver that raises the price cannot charge an outstanding quote more than it promised. Only new challenges get the new price.
+
+Resolvers run on every gated request, paid retries and session spends included, so keep them cheap and side-effect free - they are not the place to write an audit record. The resolved `amount` is ignored on those requests, but the resolved `scope` is not: a session is spent against the scope the resolver returns *now*. If a caller's tier changes while they hold credits, their session stops matching and they get a fresh `402`. Keep a tier's scope stable for as long as its sessions can live (`MPP_SESSION_TTL`), or key the scope on something that outlives the tier.
+
 ## Preconditions
 
 The payment gate runs before your controller. On a paid retry it settles the payment and then calls the controller, so a 404 raised inside the controller comes after the buyer has already paid. And the first, unpaid request to a missing resource returns a `402`, which tells an agent to pay for something that does not exist.
@@ -523,6 +753,8 @@ public function show() { /* ... */ }
 
 Checks are additive and composed in order: the `global` checks run first, then the route's own, de-duplicated. The first check that returns a response wins, and the rest do not run, so a global `usernotblocked` short-circuits before a route's `postexists` ever fires. A name that is not defined in `checks` throws `InvalidConfigurationException`, so a typo fails closed rather than silently skipping a check.
 
+Checks run on every guarded route, however it was declared - middleware arguments, `mpp` plus an attribute, or an attribute enforced automatically. The `PaymentSpec` they receive has already been through any [price resolvers](#dynamic-pricing), so `$spec->amount` is the price this request will actually be charged, not the route's static one. A check can use that: refuse a purchase above a caller's spending cap, for instance.
+
 If a request can only be judged after settlement, you have to refund instead, which is worse for the buyer and rail-specific. Prefer a precondition wherever existence or eligibility can be determined up front.
 
 ## Session Storage
@@ -561,7 +793,6 @@ The main settings live in `config/mpp.php`.
 | `challenge_ttl` | Challenge lifetime in seconds. Default: `300`. |
 | `session_ttl` | Metered session lifetime in seconds. Default: `3600`. |
 | `default_method` | Primary settlement method. Default: `stripe`. |
-| `accept` | Ordered native method set, such as `['stripe', 'acme']`. Leave null to offer only `default_method`. Including Tempo raises `InvalidConfigurationException`. |
 | `defaults.amount` | Global price fallback. Leave null to require each route to set a price. |
 | `defaults.currency` | Global currency fallback. Default: `USD`. |
 | `defaults.grants` | Global grants fallback. Default: `1`. |
@@ -571,6 +802,10 @@ The main settings live in `config/mpp.php`.
 | `attributes.enabled` | Enables automatic `#[RequiresPayment]` enforcement. Default: `false`. |
 | `attributes.middleware_groups` | Route groups used by automatic attribute enforcement. Default: `['web', 'api']`. |
 | `price_book` | Named pricing presets. |
+| `pricing.resolvers` | Named `[Class::class, 'method']` price resolvers, keyed by the name routes reference. |
+| `pricing.global` | Resolvers applied to every gated route, before route-specific ones. |
+| `preconditions.checks` | Named `[Class::class, 'method']` checks, keyed by the name routes reference. |
+| `preconditions.global` | Checks run on every gated route, before route-specific ones. |
 
 ### Price Book
 
@@ -588,6 +823,22 @@ Route::get('/report', ReportController::class)
 ```
 
 The key also becomes the default scope.
+
+An entry can also carry its own `preconditions` and `pricing` lists, so every route using it inherits them:
+
+```php
+'price_book' => [
+    'report.basic' => [
+        'amount' => '5.00',
+        'currency' => 'USD',
+        'grants' => 10,
+        'pricing' => ['tiered'],
+        'preconditions' => ['usernotblocked'],
+    ],
+],
+```
+
+Either list may be written as an array or pipe-separated (`'tiered|regional'`). A route that names its own `pricing=` or `preconditions=` replaces the entry's list rather than adding to it.
 
 ### Configuration Validation
 
@@ -624,61 +875,6 @@ STRIPE_BUYER_SECRET_KEY=sk_test_... STRIPE_SECRET_KEY=sk_test_... vendor/bin/pes
 ```
 
 ## Advanced Usage
-
-### Multiple Native Rails
-
-Stripe uses the package's native challenge shape, where one `402` can list several signed `accepts[]` entries. Custom rails that implement `Square1\Mpp\Settlement\Verifier` can use the same shape.
-
-```php
-'accept' => ['stripe', 'acme'],
-```
-
-Per route:
-
-```php
-Route::get('/resource', MyPaidResource::class)
-    ->middleware('mpp:0.50,USD,methods=stripe|acme');
-```
-
-The order matters: the first method listed in `accept` or `methods=` is the primary, and the agent is offered the rest in that order. Each accept entry is signed for its method. A signature for one method cannot be reused for another.
-
-> Tempo cannot be part of a multi-rail `accepts[]` challenge.
->
-> Do not configure `accept => ['stripe', 'tempo']` or `methods=stripe|tempo`. Tempo uses the mppx challenge shape, so a Tempo challenge must offer only Tempo. If one Laravel route should accept both Stripe and Tempo, choose the rail per request instead.
-
-### Stripe and Tempo on One Route
-
-A single `402` can use only one wire format. To accept either Stripe or Tempo on the same Laravel route, choose the rail before invoking the MPP middleware:
-
-```php
-namespace App\Http\Middleware;
-
-use Closure;
-use Illuminate\Http\Request;
-use Square1\Mpp\Http\Middleware\RequirePayment;
-use Symfony\Component\HttpFoundation\Response;
-
-class ChooseRail
-{
-    public function __construct(private readonly RequirePayment $mpp) {}
-
-    public function handle(Request $request, Closure $next): Response
-    {
-        $spec = $request->query('rail') === 'tempo'
-            ? '0.01,USD,method=tempo,scope=resource'
-            : '0.50,USD,method=stripe,scope=resource';
-
-        return $this->mpp->handle($request, $next, ...explode(',', $spec));
-    }
-}
-```
-
-```php
-Route::get('/resource', MyPaidResource::class)
-    ->middleware(\App\Http\Middleware\ChooseRail::class);
-```
-
-Point mppx clients at the Tempo URL, for example `/resource?rail=tempo`.
 
 ### Custom Native Verifiers
 
@@ -739,9 +935,9 @@ Register and offer it:
         'payment_method_types' => ['acme'],
     ],
 ],
-
-'accept' => ['stripe', 'acme'],
 ```
+
+Then use it on a route with `method=acme`, or make it the house rail with `MPP_DEFAULT_METHOD=acme`.
 
 The gate already checks that the challenge exists, is unexpired, was offered for the method, and has a valid signature. It also burns successful challenges and serializes concurrent settlement attempts. If your rail supports idempotency keys, use the challenge id.
 
@@ -801,6 +997,8 @@ Tempo uses the separate mppx format emitted and consumed by the `mppx` client.
 
 - Challenges are HMAC-signed over the payment terms and expiry.
 - A paid retry must echo the signature for the selected method.
+- A dynamically resolved price binds at mint time. Settlement verifies against the stored challenge, so re-resolving cannot change what a buyer was quoted.
+- Waiving a charge must be explicit (`free => true`); a zero or unparseable resolved amount throws rather than serving free.
 - Challenges are burned after successful settlement.
 - Stripe settlement is trusted only after a succeeded PaymentIntent matching the challenge amount and currency.
 - Tempo settlement is trusted only after the signed transfer pays the challenged token, amount, and recipient, and the transaction is confirmed.

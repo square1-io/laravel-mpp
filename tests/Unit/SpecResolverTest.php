@@ -2,7 +2,6 @@
 
 use Illuminate\Http\Request;
 use Square1\Mpp\Attributes\RequiresPayment;
-use Square1\Mpp\Exceptions\InvalidConfigurationException;
 use Square1\Mpp\Payment\SpecResolver;
 
 beforeEach(function () {
@@ -50,9 +49,15 @@ it('derives a default scope from the path', function () {
     expect($this->resolver->fromMiddlewareArgs(['0.50', 'USD'], Request::create('/a/b/c'))->scope)->toBe('a.b.c');
 });
 
-it('throws without an amount', function () {
-    $this->resolver->fromMiddlewareArgs([], Request::create('/x'));
-})->throws(InvalidConfigurationException::class);
+// Resolving a spec no longer decides whether it has a price: a route may state
+// none and leave that to its resolvers. The pipeline is what insists, once they
+// have run — see PaymentPipelineTest.
+it('leaves the amount null when nothing states one', function () {
+    $spec = $this->resolver->fromMiddlewareArgs([], Request::create('/x'));
+
+    expect($spec->amount)->toBeNull()
+        ->and($spec->isPriced())->toBeFalse();
+});
 
 it('falls back to the global default amount and currency when omitted inline', function () {
     config()->set('mpp.defaults.amount', '0.99');
@@ -73,11 +78,31 @@ it('lets an inline amount override the global default', function () {
     expect($spec->amount)->toBe('2.50')->and($spec->currency)->toBe('USD');
 });
 
-it('throws when no amount is given inline and no global default is set', function () {
+it('leaves the amount null when no global default is set either', function () {
     config()->set('mpp.defaults.amount', null);
 
-    $this->resolver->fromMiddlewareArgs(['scope=match'], Request::create('/x'));
-})->throws(InvalidConfigurationException::class);
+    $spec = $this->resolver->fromMiddlewareArgs(['scope=match'], Request::create('/x'));
+
+    expect($spec->amount)->toBeNull()->and($spec->scope)->toBe('match');
+});
+
+it('treats an empty inline amount as unpriced rather than as zero', function () {
+    config()->set('mpp.defaults.amount', '');
+
+    expect($this->resolver->fromMiddlewareArgs(['scope=match'], Request::create('/x'))->amount)
+        ->toBeNull();
+});
+
+it('resolves a price_book entry that carries resolvers instead of an amount', function () {
+    config()->set('mpp.defaults.amount', null);
+    config()->set('mpp.price_book', ['metered.usage' => ['pricing' => ['tiered']]]);
+
+    $spec = $this->resolver->fromMiddlewareArgs(['metered.usage'], Request::create('/x'));
+
+    expect($spec->amount)->toBeNull()
+        ->and($spec->pricing)->toBe(['tiered'])
+        ->and($spec->scope)->toBe('metered.usage');
+});
 
 it('reads a positional amount then options when currency is omitted', function () {
     $spec = $this->resolver->fromMiddlewareArgs(['0.50', 'grants=5', 'scope=clip'], Request::create('/x'));
@@ -102,11 +127,13 @@ it('inherits the global default amount in an attribute that omits it', function 
     expect($spec->amount)->toBe('1.50')->and($spec->scope)->toBe('clip');
 });
 
-it('throws for an attribute with no amount and no global default', function () {
+it('leaves an attribute with no amount and no global default unpriced', function () {
     config()->set('mpp.defaults.amount', null);
 
-    $this->resolver->fromAttribute(new RequiresPayment(scope: 'clip'), Request::create('/x'));
-})->throws(InvalidConfigurationException::class);
+    $spec = $this->resolver->fromAttribute(new RequiresPayment(scope: 'clip'), Request::create('/x'));
+
+    expect($spec->amount)->toBeNull()->and($spec->scope)->toBe('clip');
+});
 
 it('resolves a price_book key, with global defaults filling an omitted currency', function () {
     config()->set('mpp.defaults.currency', 'gbp');
@@ -228,4 +255,77 @@ it('reads preconditions from a RequiresPayment attribute', function () {
     );
 
     expect($spec->preconditions)->toBe(['postexists']);
+});
+
+it('parses a per-route pricing= list, ordered', function () {
+    $spec = $this->resolver->fromMiddlewareArgs(
+        ['5.00', 'USD', 'pricing=tiered|region'],
+        Request::create('/report')
+    );
+
+    expect($spec->pricing)->toBe(['tiered', 'region']);
+});
+
+it('defaults pricing to an empty list when none is given', function () {
+    $spec = $this->resolver->fromMiddlewareArgs(['0.50', 'USD'], Request::create('/clip'));
+
+    expect($spec->pricing)->toBe([]);
+});
+
+it('keeps the route amount as the fallback a resolver may decline to override', function () {
+    $spec = $this->resolver->fromMiddlewareArgs(['5.00', 'USD', 'pricing=tiered'], Request::create('/report'));
+
+    expect($spec->amount)->toBe('5.00')->and($spec->free)->toBeFalse();
+});
+
+it('reads pricing from a RequiresPayment attribute', function () {
+    $spec = $this->resolver->fromAttribute(
+        new RequiresPayment(amount: '5.00', pricing: ['tiered']),
+        Request::create('/report')
+    );
+
+    expect($spec->pricing)->toBe(['tiered']);
+});
+
+it('reads a price_book entry’s own pricing list', function () {
+    config()->set('mpp.price_book', [
+        'report.basic' => ['amount' => '5.00', 'pricing' => ['tiered']],
+    ]);
+
+    $spec = $this->resolver->fromMiddlewareArgs(['report.basic'], Request::create('/report'));
+
+    expect($spec->pricing)->toBe(['tiered']);
+});
+
+it('accepts a price_book pricing list written pipe-separated', function () {
+    config()->set('mpp.price_book', [
+        'report.basic' => ['amount' => '5.00', 'pricing' => 'tiered|region'],
+    ]);
+
+    $spec = $this->resolver->fromMiddlewareArgs(['report.basic'], Request::create('/report'));
+
+    expect($spec->pricing)->toBe(['tiered', 'region']);
+});
+
+it('accepts a price_book preconditions list written pipe-separated', function () {
+    config()->set('mpp.price_book', [
+        'report.basic' => ['amount' => '5.00', 'preconditions' => 'postexists|usernotblocked'],
+    ]);
+
+    $spec = $this->resolver->fromMiddlewareArgs(['report.basic'], Request::create('/report'));
+
+    expect($spec->preconditions)->toBe(['postexists', 'usernotblocked']);
+});
+
+it('lets a route’s pricing= option override the price_book entry’s list', function () {
+    config()->set('mpp.price_book', [
+        'report.basic' => ['amount' => '5.00', 'pricing' => ['tiered']],
+    ]);
+
+    $spec = $this->resolver->fromMiddlewareArgs(
+        ['report.basic', 'pricing=region'],
+        Request::create('/report')
+    );
+
+    expect($spec->pricing)->toBe(['region']);
 });

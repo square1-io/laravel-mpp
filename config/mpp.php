@@ -33,33 +33,17 @@ return [
     | Default (primary) settlement method
     |--------------------------------------------------------------------------
     |
-    | The primary method, used for ordering and for single-method back-compat:
-    | when a challenge offers exactly one method, its wire shape is identical to
-    | a pre-multi-rail challenge. It must be one of the `methods` keys below.
+    | The rail a route settles over unless it names its own with `method=` on the
+    | middleware or `method:` on the #[RequiresPayment] attribute. It must be one
+    | of the `methods` keys below.
+    |
+    | A 402 quotes one rail. The two shipped rails speak different wire formats,
+    | so a single challenge cannot offer both — to serve both from one URL, pick
+    | the rail per request before the middleware runs. See "Can One Route Offer
+    | Both Rails?" in the README.
     |
     */
     'default_method' => env('MPP_DEFAULT_METHOD', 'stripe'),
-
-    /*
-    |--------------------------------------------------------------------------
-    | Offered methods (multi-rail)
-    |--------------------------------------------------------------------------
-    |
-    | The ordered set of native-dialect settlement methods a challenge offers by
-    | default, as an array of `methods` keys. A native challenge emits one signed
-    | `accepts[]` entry per offered method (each independently signed for THAT
-    | method), and a client picks the first it can satisfy.
-    |
-    | Leave this null/unset to offer just the `default_method` — which keeps the
-    | single-method wire shape byte-identical to before. Set it to offer several
-    | native rails at once. Tempo speaks the separate mppx dialect and must be
-    | selected as the primary/single method with `method=tempo` or
-    | `default_method=tempo`. A route can override native offers per-request via
-    | the middleware (`mpp:0.50,USD,methods=stripe|other`) or the
-    | #[RequiresPayment(methods: ['stripe', 'other'])] attribute.
-    |
-    */
-    'accept' => null, // e.g. ['stripe', 'other-native-rail']
 
     /*
     |--------------------------------------------------------------------------
@@ -72,7 +56,7 @@ return [
     | (or a bare attribute) instead of repeating the amount on every route.
     | Leave `amount` null to keep an explicit price mandatory per route (the
     | default: nothing changes unless you set one). The method/network defaults
-    | already live in `default_method` / `accept` / `methods.*` above.
+    | already live in `default_method` / `methods.*` above.
     |
     */
     'defaults' => [
@@ -98,8 +82,9 @@ return [
     |      synchronous API call you initiate), implement a
     |      Square1\Mpp\Settlement\SettlementChecker and reuse the matching logic
     |      pattern in TempoVerifier.
-    |   2. Add a `methods.<name>` block here with at least a `verifier`, and list
-    |      `<name>` in `accept` (above) to offer it.
+    |   2. Add a `methods.<name>` block here with at least a `verifier`. Use it on
+    |      a route with `method=<name>`, or make it the house rail with
+    |      `default_method` (above).
     | Nothing in the native protocol layer needs to change.
     |
     | VALIDATION: the gate checks a rail's config the first time a route offers it
@@ -228,11 +213,67 @@ return [
     |--------------------------------------------------------------------------
     |
     | Optional named pricing presets referenced by scope key, e.g.
-    | ->middleware('mpp:report.basic').
+    | ->middleware('mpp:report.basic'). An entry may also carry its own
+    | `preconditions` and `pricing` lists (array, or a pipe-separated string),
+    | which a route's own option overrides.
     |
     */
     'price_book' => [
         // 'report.basic' => ['amount' => '0.50', 'currency' => 'USD', 'grants' => 10],
+        // 'report.pro'   => ['amount' => '5.00', 'pricing' => ['tiered']],
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Dynamic pricing
+    |--------------------------------------------------------------------------
+    |
+    | Named resolvers that set the price per REQUEST rather than per route, so
+    | one endpoint can charge $2 to one caller and $5 to another. Each is a
+    | [Class::class, 'method'] pair (resolved via the container, so
+    | config:cache-safe) called with the Request and the resolved PaymentSpec,
+    | returning an array of overrides or null to keep the route's static price:
+    |
+    |     return ['amount' => '2.00'];                 // cheaper for this caller
+    |     return ['amount' => '2.00', 'grants' => 20, 'scope' => 'report.pro'];
+    |     return ['free' => true];                     // waive the charge entirely
+    |     return null;                                 // leave the price alone
+    |
+    | Overridable keys: amount, currency, grants, scope, free. Anything else
+    | throws, as does a zero/negative/non-numeric amount — waiving a charge has
+    | to be said out loud with `free => true`, so a resolver that miscomputes an
+    | amount fails instead of giving the resource away. Rail selection
+    | (method/methods) is not a resolver's to change.
+    |
+    | `global` resolvers apply to every gated route. A route adds its own with
+    | `pricing=` on the middleware (`mpp:5.00,USD,pricing=tiered`) or
+    | `pricing: [...]` on the attribute. Globals run first, then the route's own,
+    | in order and de-duplicated, each seeing the result of the last. An unknown
+    | name throws, so a typo can never silently fall back to the static price.
+    |
+    | Something must supply a price before the gate: the route, the global
+    | default above, or a resolver. Declare an amount on the route when a list
+    | price is real — it is what unrecognised callers pay, and the fallback if a
+    | resolver is disabled. Omit it (`mpp:scope=report,pricing=tiered`) when there
+    | is no list price to state, and the resolvers own it; if they all decline
+    | then, the request throws rather than being served.
+    |
+    | Note `null` means "no opinion", NOT "no charge". Waiving is `free => true`.
+    |
+    | The price a buyer pays is the one bound into the signed 402 — settlement
+    | verifies against the stored challenge, never a re-resolved spec — so a
+    | resolver whose answer changes between the 402 and the paid retry cannot
+    | alter what that buyer was quoted.
+    |
+    */
+    'pricing' => [
+        'resolvers' => [
+            // 'tiered' => [\App\Mpp\Pricing\TieredPrice::class, 'price'],
+        ],
+
+        'global' => [
+            // 'tiered',
+        ],
     ],
 
     /*

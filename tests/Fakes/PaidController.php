@@ -19,4 +19,16 @@ class PaidController
     {
         return response()->json(['report' => 'ok']);
     }
+
+    #[RequiresPayment(amount: '5.00', currency: 'USD', scope: 'attr.tiered', pricing: ['tiered'])]
+    public function tiered(): Response
+    {
+        return response('TIERED', 200);
+    }
+
+    #[RequiresPayment(amount: '1.00', currency: 'USD', scope: 'attr.guarded', preconditions: ['deny'])]
+    public function guarded(): Response
+    {
+        return response('GUARDED', 200);
+    }
 }

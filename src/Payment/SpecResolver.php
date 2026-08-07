@@ -4,7 +4,6 @@ namespace Square1\Mpp\Payment;
 
 use Illuminate\Http\Request;
 use Square1\Mpp\Attributes\RequiresPayment;
-use Square1\Mpp\Exceptions\InvalidConfigurationException;
 
 /**
  * Builds a PaymentSpec from either middleware arguments or a #[RequiresPayment]
@@ -25,17 +24,19 @@ class SpecResolver
             $options = $this->parseOptions(array_slice($args, 1));
 
             return $this->build(
-                (string) $entry['amount'],
+                // A book entry may omit the amount too, if it carries resolvers.
+                $entry['amount'] ?? $this->defaultAmount(),
                 strtoupper($entry['currency'] ?? $this->defaultCurrency()),
                 (int) ($options['grants'] ?? $entry['grants'] ?? $this->defaultGrants()),
                 $options['scope'] ?? $args[0],
                 $options['method'] ?? null,
                 $request,
-                isset($options['methods'])
-                    ? array_values(array_filter(array_map('trim', explode('|', $options['methods']))))
-                    : (isset($entry['methods']) ? (array) $entry['methods'] : null),
-                $this->parsePreconditions($options)
-                    ?: (isset($entry['preconditions']) ? (array) $entry['preconditions'] : []),
+                $this->parseNamedList($options, 'methods')
+                    ?: ($this->entryList($entry, 'methods') ?: null),
+                $this->parseNamedList($options, 'preconditions')
+                    ?: $this->entryList($entry, 'preconditions'),
+                $this->parseNamedList($options, 'pricing')
+                    ?: $this->entryList($entry, 'pricing'),
             );
         }
 
@@ -50,46 +51,34 @@ class SpecResolver
         }
 
         $options = $this->parseOptions(array_slice($args, count($positional)));
+
+        // May be null: a route can leave pricing entirely to its resolvers. The
+        // pipeline is what insists a price exists, once they have had their say.
         $amount = $positional[0] ?? $this->defaultAmount();
 
-        if ($amount === null || $amount === '') {
-            throw new InvalidConfigurationException(
-                'The mpp middleware needs an amount: give one inline (e.g. mpp:0.50,USD), set a '
-                .'global default (MPP_DEFAULT_AMOUNT / mpp.defaults.amount), reference a price_book '
-                .'key, or use a #[RequiresPayment] attribute.'
-            );
-        }
-
         // A per-route override: `methods=stripe|other` (pipe-separated, ordered).
-        $methods = isset($options['methods']) && $options['methods'] !== ''
-            ? array_values(array_filter(array_map('trim', explode('|', $options['methods']))))
-            : null;
+        $methods = $this->parseNamedList($options, 'methods') ?: null;
 
         return $this->build(
-            (string) $amount,
+            $amount,
             strtoupper($positional[1] ?? $this->defaultCurrency()),
             (int) ($options['grants'] ?? $this->defaultGrants()),
             $options['scope'] ?? null,
             $options['method'] ?? null,
             $request,
             $methods,
-            $this->parsePreconditions($options),
+            $this->parseNamedList($options, 'preconditions'),
+            $this->parseNamedList($options, 'pricing'),
         );
     }
 
     public function fromAttribute(RequiresPayment $attribute, Request $request): PaymentSpec
     {
+        // Null is allowed here too — see fromMiddlewareArgs.
         $amount = $attribute->amount ?? $this->defaultAmount();
 
-        if ($amount === null || $amount === '') {
-            throw new InvalidConfigurationException(
-                'A #[RequiresPayment] attribute needs an amount, or a global default '
-                .'(MPP_DEFAULT_AMOUNT / mpp.defaults.amount).'
-            );
-        }
-
         return $this->build(
-            (string) $amount,
+            $amount,
             strtoupper($attribute->currency ?? $this->defaultCurrency()),
             $attribute->grants ?? $this->defaultGrants(),
             $attribute->scope,
@@ -97,15 +86,20 @@ class SpecResolver
             $request,
             $attribute->methods,
             $attribute->preconditions,
+            $attribute->pricing,
         );
     }
 
     /**
      * @param  list<string>|null  $methods  explicit per-route ordered method set, or null to use config defaults
      * @param  list<string>  $preconditions  named precondition checks to run for this route (in order)
+     * @param  list<string>  $pricing  named price resolvers to apply for this route (in order)
      */
-    private function build(string $amount, string $currency, int $grants, ?string $scope, ?string $method, Request $request, ?array $methods = null, array $preconditions = []): PaymentSpec
+    private function build(string|float|null $amount, string $currency, int $grants, ?string $scope, ?string $method, Request $request, ?array $methods = null, array $preconditions = [], array $pricing = []): PaymentSpec
     {
+        // Normalise "stated no price" to null; everything downstream tests for it.
+        $amount = ($amount === null || $amount === '') ? null : (string) $amount;
+
         $offered = $this->resolveOfferedMethods($method, $methods);
         $primary = $offered[0];
         $methodConfig = config("mpp.methods.{$primary}", []);
@@ -120,6 +114,7 @@ class SpecResolver
             paymentMethodTypes: $methodConfig['payment_method_types'] ?? ['card'],
             offeredMethods: $offered,
             preconditions: $preconditions,
+            pricing: $pricing,
         );
     }
 
@@ -193,19 +188,47 @@ class SpecResolver
     }
 
     /**
-     * Parse the per-route `preconditions=a|b` option into an ordered list of
-     * named checks (pipe-separated, like `methods=`). Empty when unset.
+     * Parse a per-route pipe-separated option — `methods=a|b`, `preconditions=a|b`,
+     * `pricing=a|b` — into an ordered list of names. Empty when unset or blank.
      *
      * @param  array<string, string>  $options
      * @return list<string>
      */
-    private function parsePreconditions(array $options): array
+    private function parseNamedList(array $options, string $key): array
     {
-        if (! isset($options['preconditions']) || $options['preconditions'] === '') {
+        return $this->splitList($options[$key] ?? null);
+    }
+
+    /**
+     * The one pipe-separated-list rule: split, trim, drop the blanks.
+     *
+     * @return list<string>
+     */
+    private function splitList(?string $value): array
+    {
+        if ($value === null || $value === '') {
             return [];
         }
 
-        return array_values(array_filter(array_map('trim', explode('|', $options['preconditions']))));
+        return array_values(array_filter(array_map('trim', explode('|', $value))));
+    }
+
+    /**
+     * Read a price_book entry's own list of names, accepting either an array or
+     * the same pipe-separated string the middleware option takes.
+     *
+     * @param  array<string, mixed>  $entry
+     * @return list<string>
+     */
+    private function entryList(array $entry, string $key): array
+    {
+        $value = $entry[$key] ?? null;
+
+        if (is_string($value) || $value === null) {
+            return $this->splitList($value);
+        }
+
+        return array_values(array_map('strval', (array) $value));
     }
 
     /**
@@ -228,9 +251,9 @@ class SpecResolver
 
     private function defaultAmount(): ?string
     {
-        $amount = config('mpp.defaults.amount');
-
-        return ($amount === null || $amount === '') ? null : (string) $amount;
+        // build() is the single place that normalises "stated no price" to null,
+        // so this only has to hand back what config holds.
+        return config('mpp.defaults.amount');
     }
 
     private function defaultCurrency(): string

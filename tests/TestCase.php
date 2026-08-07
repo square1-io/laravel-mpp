@@ -11,6 +11,8 @@ use Square1\Mpp\Tests\Fakes\DenyPrecondition;
 use Square1\Mpp\Tests\Fakes\FakeTempoVerifier;
 use Square1\Mpp\Tests\Fakes\FakeVerifier;
 use Square1\Mpp\Tests\Fakes\PaidController;
+use Square1\Mpp\Tests\Fakes\RegionPricing;
+use Square1\Mpp\Tests\Fakes\TieredPricing;
 
 abstract class TestCase extends OrchestraTestCase
 {
@@ -53,6 +55,20 @@ abstract class TestCase extends OrchestraTestCase
             'allow' => [AllowPrecondition::class, 'check'],
             'deny' => [DenyPrecondition::class, 'check'],
         ]);
+
+        // Named price resolvers for the dynamic-pricing tests. Both decline by
+        // default (their static $overrides is null), so a route carrying them
+        // keeps its static price until a test says otherwise. `global` stays
+        // empty by default.
+        $app['config']->set('mpp.pricing.resolvers', [
+            'tiered' => [TieredPricing::class, 'price'],
+            'region' => [RegionPricing::class, 'price'],
+        ]);
+
+        // A price_book entry carrying its own resolver list.
+        $app['config']->set('mpp.price_book', [
+            'report.dynamic' => ['amount' => '5.00', 'currency' => 'USD', 'pricing' => ['tiered']],
+        ]);
     }
 
     protected function defineRoutes($router): void
@@ -81,14 +97,49 @@ abstract class TestCase extends OrchestraTestCase
         Route::get('/precond/unknown', fn () => response('OK', 200))
             ->middleware('mpp:0.50,USD,scope=precond.unknown,preconditions=ghost');
 
+        // Dynamic pricing routes. `/price/tiered` carries a static $5 fallback the
+        // resolver may override; `/price/open` carries none, so `global` applies.
+        Route::get('/price/tiered', fn () => response('TIERED', 200))
+            ->middleware('mpp:5.00,USD,scope=price.tiered,pricing=tiered');
+        Route::get('/price/open', fn () => response('OPEN', 200))
+            ->middleware('mpp:5.00,USD,scope=price.open');
+        Route::get('/price/both', fn () => response('BOTH', 200))
+            ->middleware('mpp:5.00,USD,scope=price.both,pricing=tiered|region');
+        Route::get('/price/metered', fn () => response()->json(['report' => 'ok']))
+            ->middleware('mpp:5.00,USD,grants=10,scope=price.metered,pricing=tiered');
+        Route::get('/price/tempo', fn () => response('TEMPO', 200))
+            ->middleware('mpp:0.01,USD,method=tempo,scope=price.tempo,pricing=tiered');
+        Route::get('/price/unknown', fn () => response('OK', 200))
+            ->middleware('mpp:5.00,USD,scope=price.unknown,pricing=ghost');
+        Route::get('/price/precond', fn () => response('OK', 200))
+            ->middleware('mpp:5.00,USD,scope=price.precond,pricing=tiered,preconditions=allow');
+        Route::get('/price/book', fn () => response('BOOK', 200))
+            ->middleware('mpp:report.dynamic');
+
         // Attribute via explicit `mpp` middleware (no args).
         Route::get('/attr/explicit', [PaidController::class, 'clip'])->middleware('mpp');
+
+        // `mpp` with neither arguments nor an attribute to read: a misconfiguration.
+        Route::get('/attr/missing', fn () => response('OK', 200))->middleware('mpp');
+
+        // Resolver-owned pricing: the route states no amount at all and leaves it
+        // to `tiered`. Unpriced until a resolver says otherwise.
+        Route::get('/price/resolver-owned', fn () => response('OWNED', 200))
+            ->middleware('mpp:scope=price.owned,pricing=tiered');
+
+        // No amount and no resolver either: nothing can ever price this.
+        Route::get('/price/nothing', fn () => response('NOTHING', 200))
+            ->middleware('mpp:scope=price.nothing');
 
         // Attribute auto-enforced by the EnforcePaymentAttributes middleware on a group.
         Route::middleware(EnforcePaymentAttributes::class)->group(function () {
             Route::get('/attr/auto', [PaidController::class, 'clip']);
             Route::get('/attr/report', [PaidController::class, 'report']);
             Route::get('/attr/plain', fn () => response('FREE', 200)); // no attribute -> passes through
+            // Auto-enforced routes must honour the attribute's pricing and
+            // preconditions too — they never pass through the `mpp` middleware.
+            Route::get('/attr/tiered', [PaidController::class, 'tiered']);
+            Route::get('/attr/guarded', [PaidController::class, 'guarded']);
         });
     }
 }

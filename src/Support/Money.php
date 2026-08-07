@@ -22,13 +22,28 @@ class Money
     }
 
     /**
+     * Is this a well-formed decimal amount string ("0.50", "5", "-1.25")?
+     *
+     * The single definition of the format for the package, so a price resolved at
+     * the gate is judged by the same rule that converts it at mint time — a
+     * scientific-notation or signed-plus value is rejected where it is set, not
+     * later. Says nothing about sign or magnitude; callers add their own rules.
+     */
+    public static function isValidAmount(string $amount): bool
+    {
+        $amount = trim($amount);
+
+        return $amount !== '' && $amount !== '-' && (bool) preg_match('/^-?\d*(\.\d+)?$/', $amount);
+    }
+
+    /**
      * "0.50" USD -> 50 ; "1.00" USD -> 100 ; "5" JPY -> 5.
      */
     public static function toMinorUnits(string $amount, string $currency): int
     {
         $amount = trim($amount);
 
-        if ($amount === '' || $amount === '-' || ! preg_match('/^-?\d*(\.\d+)?$/', $amount)) {
+        if (! self::isValidAmount($amount)) {
             throw new InvalidConfigurationException("Invalid money amount: '{$amount}'.");
         }
 

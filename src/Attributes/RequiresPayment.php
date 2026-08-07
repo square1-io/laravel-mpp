@@ -28,6 +28,12 @@ use Attribute;
  *
  * `amount`, `currency` and `grants` are optional: omit them to inherit the
  * global `mpp.defaults` (e.g. `MPP_DEFAULT_AMOUNT`), overridable per attribute.
+ *
+ * `pricing` names resolvers that adjust the price per request (tier, region,
+ * request size). The `amount` here stays the fallback for when a resolver
+ * declines to override:
+ *
+ *   #[RequiresPayment(amount: '5.00', pricing: ['tiered'])]
  */
 #[Attribute(Attribute::TARGET_METHOD | Attribute::TARGET_CLASS)]
 final class RequiresPayment
@@ -36,6 +42,8 @@ final class RequiresPayment
      * @param  list<string>|null  $methods  ordered set of offered settlement methods (primary first)
      * @param  list<string>  $preconditions  named precondition checks for this route, run (after any
      *                                       global ones) before a challenge is minted or settled
+     * @param  list<string>  $pricing  named price resolvers for this route, applied (after any global
+     *                                 ones) to the resolved spec before it reaches the gate
      */
     public function __construct(
         public readonly string|float|null $amount = null,
@@ -45,5 +53,6 @@ final class RequiresPayment
         public readonly ?string $method = null,
         public readonly ?array $methods = null,
         public readonly array $preconditions = [],
+        public readonly array $pricing = [],
     ) {}
 }
