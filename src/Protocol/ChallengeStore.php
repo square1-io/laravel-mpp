@@ -30,7 +30,7 @@ class ChallengeStore
             return null;
         }
 
-        $challenge = unserialize($raw, ['allowed_classes' => [Challenge::class, ChallengeOffer::class, CarbonImmutable::class]]);
+        $challenge = unserialize($raw, ['allowed_classes' => [Challenge::class, CarbonImmutable::class]]);
 
         return $challenge instanceof Challenge ? $challenge : null;
     }

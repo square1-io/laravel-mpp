@@ -38,3 +38,25 @@ it('rejects amounts with more precision than the currency supports', function (s
     ['0.009', 'USD'],
     ['5.01', 'JPY'],
 ])->throws(InvalidConfigurationException::class);
+
+it('charges ISK and UGX as whole units (two-decimal ending in 00)', function (string $amount, string $currency, int $expected) {
+    expect(Money::toMinorUnits($amount, $currency))->toBe($expected);
+})->with([
+    ['5', 'ISK', 500],
+    ['5.00', 'ISK', 500],
+    ['5', 'UGX', 500],
+    ['5.00', 'UGX', 500],
+]);
+
+it('rejects a fractional ISK or UGX amount Stripe forbids', function (string $amount, string $currency) {
+    Money::toMinorUnits($amount, $currency);
+})->with([
+    ['5.01', 'ISK'],
+    ['5.01', 'UGX'],
+])->throws(InvalidConfigurationException::class, 'whole');
+
+it('fails closed on an amount above PHP_INT_MAX instead of saturating', function () {
+    // Two-decimal, so minor units are amount * 100. This whole part alone exceeds
+    // PHP_INT_MAX in minor units.
+    Money::toMinorUnits('999999999999999999999', 'USD');
+})->throws(InvalidConfigurationException::class, 'maximum supported');

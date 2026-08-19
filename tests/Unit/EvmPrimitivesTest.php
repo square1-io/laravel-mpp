@@ -1,6 +1,5 @@
 <?php
 
-use Square1\Mpp\Support\Evm\Attribution;
 use Square1\Mpp\Support\Evm\Keccak;
 use Square1\Mpp\Support\Evm\Rlp;
 use Square1\Mpp\Support\Evm\TempoTransaction;
@@ -50,16 +49,4 @@ it('returns null when a call targets a different token', function () {
     $call = ['to' => '0x1111111111111111111111111111111111111111', 'value' => null, 'data' => '0x95777d59'];
 
     expect(TempoTransaction::decodeTransferCall($call, '0x20c0000000000000000000000000000000000000'))->toBeNull();
-});
-
-it('verifies and rejects MPP attribution memo bindings against fixtures', function () {
-    $memo = '0xef1ed7120135bfd7eb12e2daed83fd00000000000000000000d661e55c8d44f9';
-    $challengeId = 'tdCiAaAQPDdNOGahL56A343eGtfHlCVnbY99W_DMbZ8';
-
-    expect(Attribution::isMppMemo($memo))->toBeTrue()
-        ->and(Attribution::verifyServer($memo, 'localhost'))->toBeTrue()
-        ->and(Attribution::verifyServer($memo, 'evil.example.com'))->toBeFalse()
-        ->and(Attribution::verifyChallengeBinding($memo, $challengeId))->toBeTrue()
-        ->and(Attribution::verifyChallengeBinding($memo, 'a-different-challenge'))->toBeFalse()
-        ->and(Attribution::isMppMemo('0x'.str_repeat('00', 32)))->toBeFalse();
 });

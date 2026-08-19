@@ -3,187 +3,200 @@
 namespace Square1\Mpp\Protocol;
 
 use Carbon\CarbonImmutable;
-use Illuminate\Support\Str;
-use Square1\Mpp\Exceptions\InvalidConfigurationException;
+use Square1\Mpp\Payment\PaymentSpec;
+use Square1\Mpp\Protocol\Requests\FiatRequestBuilder;
+use Square1\Mpp\Protocol\Requests\RailRequestBuilder;
+use Square1\Mpp\Protocol\Requests\TempoRequestBuilder;
 
 /**
- * Mints, signs and encodes payment challenges.
- *
- * The signature is an HMAC over the binding fields (id, amount, currency,
- * method, network_id, grants, scope, expiresAt) so a client cannot alter the
- * price or grant count between the 402 and the paid retry, and a challenge
- * signed under a rotated secret will no longer verify.
- *
- * A challenge may offer several settlement methods. Each offered method gets its
- * OWN signature over the SAME shared economic fields but THAT method's
- * method/network_id, so a signature minted for one method does not validate
- * another method's accept entry (the signature stays load-bearing per method).
- * The primary method's canonical string and signature are byte-identical to a
- * single-method challenge, so the wire shape is unchanged when only one method
- * is offered.
+ * Mints spec-format challenges — one Challenge per offered method, each
+ * self-authenticating via the seven-slot HMAC binding (its id) — and renders
+ * the combined `WWW-Authenticate` header and problem+json body for a 402.
  */
 class ChallengeFactory
 {
     public function __construct(
-        private readonly string $secret,
+        private readonly ChallengeBinding $binding,
         private readonly int $ttl = 300,
-    ) {
-        if ($this->secret === '') {
-            throw new InvalidConfigurationException(
-                'mpp.secret is not set. Provide MPP_CHALLENGE_SECRET before minting challenges.'
-            );
-        }
-    }
+    ) {}
 
     /**
-     * @param  array{method?:string,amount:string,currency:string,grants?:int,scope:string,networkId?:?string,paymentMethodTypes?:list<string>,intent?:string,offers?:list<ChallengeOffer>}  $spec
+     * Mint a challenge per offered method, honouring the caller's
+     * Accept-Payment ranking. Always returns at least the server-preferred
+     * set: an Accept-Payment that matches nothing is ignored per spec.
+     *
+     * `$digest` (the challenged body's RFC 9530 Content-Digest) and `$resource`
+     * (the route the challenge was minted for) describe the request, not the
+     * settlement method, so both are identical across every rail in one 402.
+     *
+     * @return non-empty-list<Challenge>
      */
-    public function mint(array $spec, ?CarbonImmutable $now = null): Challenge
-    {
-        $now ??= CarbonImmutable::now();
+    public function mintAll(
+        PaymentSpec $spec,
+        string $realm,
+        AcceptPayment $accept,
+        ?string $digest = null,
+        ?string $resource = null,
+        ?CarbonImmutable $now = null,
+    ): array {
+        $intent = 'charge';
+        $methods = $accept->rank($spec->offeredMethods, $intent);
 
-        return new Challenge(
-            id: 'chal_'.Str::ulid(),
-            method: $spec['method'] ?? 'stripe',
-            amount: (string) $spec['amount'],
-            currency: strtoupper($spec['currency']),
-            grants: (int) ($spec['grants'] ?? 1),
-            scope: $spec['scope'],
-            expiresAt: $now->addSeconds($this->ttl),
-            networkId: $spec['networkId'] ?? null,
-            paymentMethodTypes: $spec['paymentMethodTypes'] ?? ['card'],
-            intent: $spec['intent'] ?? 'charge',
-            offers: $spec['offers'] ?? [],
+        return array_map(
+            fn (string $method) => $this->mint($spec, $realm, $method, $intent, $digest, $resource, $now),
+            $methods,
         );
     }
 
-    /**
-     * Sign the challenge's PRIMARY method. Byte-identical to a single-method
-     * challenge's signature.
-     */
-    public function sign(Challenge $challenge): string
-    {
-        return $this->signOffer($challenge, $challenge->primaryOffer());
+    public function mint(
+        PaymentSpec $spec,
+        string $realm,
+        string $method,
+        string $intent = 'charge',
+        ?string $digest = null,
+        ?string $resource = null,
+        ?CarbonImmutable $now = null,
+    ): Challenge {
+        $now ??= CarbonImmutable::now();
+        $config = (array) config("mpp.methods.{$method}", []);
+
+        // `resource` rides in opaque rather than earning a binding slot of its
+        // own: opaque is already slot 7, so anything placed here is bound into
+        // the id and echoed back, and adding a slot would change the HMAC of
+        // every challenge that omits it. Scope alone cannot stand in for it —
+        // one scope may cover several routes at several prices, so a challenge
+        // bought at the cheap one would settle at the dear one.
+        $opaque = array_filter([
+            'scope' => $spec->scope,
+            'grants' => $spec->grants > 1 ? (string) $spec->grants : null,
+            'resource' => $resource,
+        ], fn ($v) => $v !== null && $v !== '');
+
+        // A per-mint random nonce makes the challenge id unique. Without it the
+        // id is a pure function of realm|method|intent|request|expires|opaque,
+        // so two 402s minted for the same route+price in the same wall-clock
+        // second collide — and a re-challenge after a burn would resurrect the
+        // burned id, letting one payment settle twice. The nonce rides in the
+        // spec's `opaque` slot, so it is bound into the id (slot 7) and echoed
+        // unchanged by conformant clients.
+        $opaque['nonce'] = bin2hex(random_bytes(16));
+
+        $unbound = new Challenge(
+            id: '',
+            realm: $realm,
+            method: $method,
+            intent: $intent,
+            request: self::builderFor($method, $config)->build($spec, $config),
+            expiresAt: $now->addSeconds($this->ttl),
+            opaque: $opaque,
+            digest: $digest,
+        );
+
+        return $unbound->withId($this->binding->idFor($unbound));
     }
 
     /**
-     * Verify a signature against the challenge's PRIMARY method.
-     */
-    public function verify(Challenge $challenge, string $signature): bool
-    {
-        return hash_equals($this->sign($challenge), $signature);
-    }
-
-    /**
-     * Sign one offered method. The HMAC binds the shared economic fields plus
-     * THIS offer's method + network_id, so the signature is method-specific.
-     */
-    public function signOffer(Challenge $challenge, ChallengeOffer $offer): string
-    {
-        return hash_hmac('sha256', $this->canonicalFor($challenge, $offer), $this->secret);
-    }
-
-    /**
-     * Verify a signature against a specific offered method. Returns false if the
-     * method is not offered by this challenge or the signature does not match.
-     */
-    public function verifyOffer(Challenge $challenge, string $method, string $signature): bool
-    {
-        $offer = $challenge->offerFor($method);
-
-        if ($offer === null) {
-            return false;
-        }
-
-        return hash_equals($this->signOffer($challenge, $offer), $signature);
-    }
-
-    private function canonicalFor(Challenge $challenge, ChallengeOffer $offer): string
-    {
-        return implode('|', [
-            $challenge->id,
-            $challenge->amount,
-            $challenge->currency,
-            $offer->method,
-            $offer->networkId ?? '',
-            (string) $challenge->grants,
-            $challenge->scope,
-            $challenge->expiresAt->toIso8601ZuluString(),
-        ]);
-    }
-
-    /**
-     * Encode the `WWW-Authenticate: Payment ...` header value.
-     */
-    public function wwwAuthenticate(Challenge $challenge): string
-    {
-        // The header advertises the PRIMARY method (back-compat); additional
-        // offered methods are advertised in the problem+json `accepts[]`. The
-        // header lists the full set of offered method names under `methods` so a
-        // header-only client can see there are alternatives.
-        $parts = [
-            'id' => $challenge->id,
-            'method' => $challenge->method,
-            'intent' => $challenge->intent,
-            'amount' => $challenge->amount,
-            'currency' => $challenge->currency,
-            'network_id' => $challenge->networkId,
-            'payment_method_types' => implode(' ', $challenge->paymentMethodTypes),
-            'grants' => (string) $challenge->grants,
-            'scope' => $challenge->scope,
-            'expires_at' => $challenge->expiresAt->toIso8601ZuluString(),
-            'sig' => $this->sign($challenge),
-        ];
-
-        // Only advertise the `methods` hint when more than one is offered, so a
-        // single-method header is byte-identical to before.
-        if ($challenge->offers !== []) {
-            $methods = array_map(fn ($offer) => $offer->method, $challenge->allOffers());
-            $parts['methods'] = implode(' ', $methods);
-        }
-
-        $encoded = [];
-        foreach ($parts as $key => $value) {
-            if ($value === null || $value === '') {
-                continue;
-            }
-            $encoded[] = sprintf('%s="%s"', $key, $value);
-        }
-
-        return 'Payment '.implode(', ', $encoded);
-    }
-
-    /**
-     * The application/problem+json body mirroring the challenge for JSON clients.
+     * The combined WWW-Authenticate value: each challenge is one `Payment …`
+     * entry, comma-joined per RFC 9110 list combining (byte-identical to what
+     * intermediaries produce from repeated header lines, and what the
+     * reference implementation emits).
      *
-     * @return array<string, mixed>
+     * @param  non-empty-list<Challenge>  $challenges
      */
-    public function problemDocument(Challenge $challenge): array
+    public function wwwAuthenticate(array $challenges): string
     {
-        // One signed accepts[] entry per offered method, primary first. For a
-        // single-method challenge this is exactly one entry, identical to before.
-        $accepts = [];
-        foreach ($challenge->allOffers() as $offer) {
-            $accepts[] = [
-                'method' => $offer->method,
-                'amount' => $challenge->amount,
-                'currency' => $challenge->currency,
-                'network_id' => $offer->networkId,
-                'payment_method_types' => $offer->paymentMethodTypes,
-                'grants' => $challenge->grants,
-                'scope' => $challenge->scope,
-                'expiresAt' => $challenge->expiresAt->toIso8601ZuluString(),
-                'sig' => $this->signOffer($challenge, $offer),
-            ];
-        }
+        return implode(', ', array_map(fn (Challenge $c) => $c->headerValue(), $challenges));
+    }
 
-        return [
-            'type' => 'https://paymentauth.org/problems/payment-required',
+    /**
+     * The registered problem types, keyed by the slug that completes
+     * `https://paymentauth.org/problems/<slug>`, as listed in the core draft's
+     * error table. All but `method-unsupported` are 402: the response carries a
+     * fresh challenge, so the request is still "payment required" — including a
+     * malformed credential, which the draft scores 402 rather than 400.
+     *
+     * @var array<string, array{title: string, status: int, detail: string}>
+     */
+    private const PROBLEMS = [
+        'payment-required' => [
             'title' => 'Payment Required',
             'status' => 402,
-            'detail' => 'Payment is required to access this resource.',
-            'challengeId' => $challenge->id,
-            'accepts' => $accepts,
+            'detail' => 'Payment is required.',
+        ],
+        'payment-insufficient' => [
+            'title' => 'Payment Insufficient',
+            'status' => 402,
+            'detail' => 'The amount paid is below the amount challenged.',
+        ],
+        'payment-expired' => [
+            'title' => 'Payment Expired',
+            'status' => 402,
+            'detail' => 'The challenge or authorization has expired.',
+        ],
+        'verification-failed' => [
+            'title' => 'Verification Failed',
+            'status' => 402,
+            'detail' => 'The payment proof could not be verified.',
+        ],
+        'method-unsupported' => [
+            'title' => 'Method Unsupported',
+            'status' => 400,
+            'detail' => 'The requested settlement method is not accepted.',
+        ],
+        'malformed-credential' => [
+            'title' => 'Malformed Credential',
+            'status' => 402,
+            'detail' => 'The Payment credential could not be parsed.',
+        ],
+        'invalid-challenge' => [
+            'title' => 'Invalid Challenge',
+            'status' => 402,
+            'detail' => 'The challenge is unknown, expired, or already used.',
+        ],
+    ];
+
+    /**
+     * The RFC 9457 body for a rejection. `challengeId` names the primary
+     * challenge, and is omitted when the response carries none to name.
+     *
+     * An unregistered `$type` falls back to `payment-required` rather than
+     * inventing a problem URL a client cannot look up.
+     *
+     * @param  list<Challenge>  $challenges
+     * @return array<string, mixed>
+     */
+    public function problemDocument(array $challenges, ?string $detail = null, string $type = 'payment-required'): array
+    {
+        $problem = self::PROBLEMS[$type] ?? self::PROBLEMS['payment-required'];
+        $slug = isset(self::PROBLEMS[$type]) ? $type : 'payment-required';
+
+        $document = [
+            'type' => 'https://paymentauth.org/problems/'.$slug,
+            'title' => $problem['title'],
+            'status' => $problem['status'],
+            'detail' => $detail ?? $problem['detail'],
         ];
+
+        if ($challenges !== []) {
+            $document['challengeId'] = $challenges[0]->id;
+        }
+
+        return $document;
+    }
+
+    /**
+     * The configured builder for a rail, else the rail default. Shared with the
+     * discovery generator so both derive a rail's request shape identically.
+     *
+     * @param  array<string, mixed>  $config
+     */
+    public static function builderFor(string $method, array $config): RailRequestBuilder
+    {
+        $class = $config['request_builder'] ?? match ($method) {
+            'tempo' => TempoRequestBuilder::class,
+            default => FiatRequestBuilder::class,
+        };
+
+        return app($class);
     }
 }

@@ -30,6 +30,92 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Settlement replay window (retry idempotency)
+    |--------------------------------------------------------------------------
+    |
+    | How long a settled challenge's receipt is remembered so a RETRY of the
+    | same payment replays that receipt instead of being charged again. Covers
+    | the "the 200 never reached the client, so it retried" case: settlement
+    | burns the challenge, and without this the retry would get a fresh 402 and
+    | pay twice. Set it to comfortably exceed your clients' retry/timeout window
+    | (default 5 min); larger just retains more records, it is never unsafe.
+    |
+    */
+    'settlement_replay_ttl' => (int) env('MPP_SETTLEMENT_REPLAY_TTL', 300),
+
+    /*
+    |--------------------------------------------------------------------------
+    | Replayable response size limit (bytes)
+    |--------------------------------------------------------------------------
+    |
+    | The largest response body the replay ledger will snapshot for idempotent
+    | retries (default 256 KB). A larger response, or a streamed/binary one whose
+    | body is never buffered, is not snapshotted: a lost-response retry of such an
+    | endpoint takes a fresh challenge instead of replaying. So a paid endpoint
+    | returning a big download or a stream is NOT lost-response-idempotent — its
+    | buyer could be charged again on a dropped connection. Keep such endpoints
+    | buffered and within this limit if you need replay, or make them idempotent
+    | in the application.
+    |
+    */
+    'replay_max_bytes' => (int) env('MPP_REPLAY_MAX_BYTES', 262144),
+
+    /*
+    |--------------------------------------------------------------------------
+    | Settlement lock lifetime
+    |--------------------------------------------------------------------------
+    |
+    | How long the per-challenge settlement lock is held, serialising concurrent
+    | retries so one payment settles exactly once. It MUST outlive your slowest
+    | verifier's worst-case runtime, or the lock lapses mid-settlement and two
+    | requests can settle in parallel. The bound is the Tempo rail's on-chain
+    | confirm: up to `methods.tempo.poll_attempts × poll_delay_ms` (~20s at the
+    | defaults). The default here clears that comfortably; raise it if you raise
+    | the Tempo poll budget.
+    |
+    */
+    'settle_lock_ttl' => (int) env('MPP_SETTLE_LOCK_TTL', 300),
+
+    /*
+    |--------------------------------------------------------------------------
+    | Protocol cache store
+    |--------------------------------------------------------------------------
+    |
+    | The cache store holding the package's protocol state: issued challenges,
+    | the settlement replay ledger, and the per-challenge settlement lock. Null
+    | follows your application's default cache store, which is fine for local
+    | development and single-process testing.
+    |
+    | PRODUCTION MULTI-NODE DEPLOYMENTS MUST POINT THIS AT A SHARED, ATOMIC
+    | BACKEND (redis / memcached / database). The single-use guarantee (a
+    | challenge settles exactly once) and the settlement lock both depend on
+    | atomic operations against storage every node can see. The `file` and
+    | `array` drivers provide neither: `array` is per-process, and `file` cannot
+    | lock across nodes — with either, two concurrent nodes can settle the same
+    | challenge twice.
+    |
+    */
+    'cache_store' => env('MPP_CACHE_STORE'),     // null = app default cache store
+
+    /*
+    |--------------------------------------------------------------------------
+    | Allow MPP over unencrypted HTTP
+    |--------------------------------------------------------------------------
+    |
+    | The MPP spec forbids issuing a Payment challenge (or accepting a credential)
+    | over plain HTTP: the 402 and the credential carry payment terms and proofs.
+    | The gate therefore refuses a non-HTTPS request by default. Set this to true
+    | ONLY for local development and tests served over HTTP.
+    |
+    | Behind a TLS-terminating load balancer or proxy, do NOT set this: instead
+    | configure Laravel's trusted proxies (bootstrap/app.php `trustProxies`) so
+    | `$request->isSecure()` reflects the real client scheme via X-Forwarded-Proto.
+    |
+    */
+    'allow_insecure' => (bool) env('MPP_ALLOW_INSECURE', false),
+
+    /*
+    |--------------------------------------------------------------------------
     | Default (primary) settlement method
     |--------------------------------------------------------------------------
     |
@@ -37,13 +123,51 @@ return [
     | middleware or `method:` on the #[RequiresPayment] attribute. It must be one
     | of the `methods` keys below.
     |
-    | A 402 quotes one rail. The two shipped rails speak different wire formats,
-    | so a single challenge cannot offer both — to serve both from one URL, pick
-    | the rail per request before the middleware runs. See "Can One Route Offer
-    | Both Rails?" in the README.
+    | To offer SEVERAL rails from one route, set `accept` below (or per-route
+    | `methods=`): the 402 then carries one Payment challenge per rail and the
+    | client answers exactly one. See "Offering Both Rails on One Route" in the
+    | README.
     |
     */
     'default_method' => env('MPP_DEFAULT_METHOD', 'stripe'),
+
+    /*
+    |--------------------------------------------------------------------------
+    | Protection realm
+    |--------------------------------------------------------------------------
+    | The `realm` parameter minted into every challenge (RFC 9110 protection
+    | space). Defaults to the request host when unset, which is right for
+    | almost everyone; set it when serving one payment surface across several
+    | hostnames.
+    */
+    'realm' => env('MPP_REALM'),
+
+    /*
+    |--------------------------------------------------------------------------
+    | Default offered methods
+    |--------------------------------------------------------------------------
+    | The ordered set of rails offered on a 402 when a route does not name its
+    | own (`method=` / `methods=`). One WWW-Authenticate Payment challenge is
+    | minted per method; clients pick via Accept-Payment. Unset, only
+    | `default_method` is offered — byte-identical to single-rail behaviour.
+    */
+    'accept' => env('MPP_ACCEPT') ? explode('|', (string) env('MPP_ACCEPT')) : null,
+
+    /*
+    |--------------------------------------------------------------------------
+    | Discovery document
+    |--------------------------------------------------------------------------
+    | The advisory OpenAPI document MPP agents use to find payable endpoints.
+    | Generated from the live router — never hand-maintained, never stale.
+    | The discovery draft requires it at GET /openapi.json, so the path is not
+    | configurable. Disable it if the app serves its own OpenAPI document, and
+    | merge the x-payment-info extension there instead.
+    */
+    'discovery' => [
+        'enabled' => (bool) env('MPP_DISCOVERY', true),
+        'title' => env('MPP_DISCOVERY_TITLE'),
+        'version' => env('MPP_DISCOVERY_VERSION', '1.0.0'),
+    ],
 
     /*
     |--------------------------------------------------------------------------
@@ -70,22 +194,28 @@ return [
     | Settlement methods (rails)
     |--------------------------------------------------------------------------
     |
-    | Each native method maps to a Verifier implementation plus its configuration.
-    | The native protocol layer is rail-agnostic: settlement sits behind the
-    | Verifier interface so additional native rails can be added without touching
-    | it. Tempo is configured here too, but it is handled by the mppx Tempo gate.
+    | Each method maps to a Verifier implementation plus its configuration.
+    | The protocol layer is rail-agnostic: every rail shares the one MPP wire
+    | format, and settlement sits behind the Verifier interface so additional
+    | rails can be added without touching it.
     |
-    | ADDING A RAIL is two steps:
+    | ADDING A RAIL is up to three steps:
     |   1. Implement Square1\Mpp\Settlement\Verifier (verify a settlement PROOF
     |      against the Challenge — never trust the client's word). For a rail
     |      whose settlement is a pre-existing external transaction (rather than a
     |      synchronous API call you initiate), implement a
     |      Square1\Mpp\Settlement\SettlementChecker and reuse the matching logic
     |      pattern in TempoVerifier.
-    |   2. Add a `methods.<name>` block here with at least a `verifier`. Use it on
-    |      a route with `method=<name>`, or make it the house rail with
-    |      `default_method` (above).
-    | Nothing in the native protocol layer needs to change.
+    |   2. If the rail's 402 `request` payload is not the default fiat shape
+    |      (amount in minor units, currency, methodDetails), implement a
+    |      Square1\Mpp\Protocol\Requests\RailRequestBuilder and set it as
+    |      `request_builder` in the method block. Omit this only for a genuinely
+    |      Stripe-shaped fiat rail; otherwise the fiat builder mints the wrong
+    |      request shape for your rail.
+    |   3. Add a `methods.<name>` block here with at least a `verifier` (and the
+    |      `request_builder` from step 2 if you wrote one). Use it on a route with
+    |      `method=<name>`, or make it the house rail with `default_method`.
+    | Nothing in the protocol layer needs to change.
     |
     | VALIDATION: the gate checks a rail's config the first time a route offers it
     | (keyed on the verifier). A shipped rail missing a value its 402 cannot be
@@ -99,8 +229,8 @@ return [
     'methods' => [
         'stripe' => [
             'verifier' => StripeVerifier::class,
-            'secret_key' => env('STRIPE_SECRET_KEY'),   // sk_test_... / sk_live_... — needed to SETTLE; the gate warns if unset
-            'network_id' => env('STRIPE_NETWORK_ID'),    // profile_... — a Link/agent wallet needs it to scope an SPT; the gate warns if unset
+            'secret_key' => env('STRIPE_SECRET_KEY'),   // sk_test_... / sk_live_..., needed to SETTLE. The gate warns if unset; the 402 still mints.
+            'network_id' => env('STRIPE_NETWORK_ID'),    // profile_..., advertised in the 402 so a wallet can scope an SPT to you. REQUIRED: the gate refuses to mint a stripe 402 without it.
             'api_version' => env('STRIPE_API_VERSION', '2026-05-27.preview'),
             'payment_method_types' => ['card'],
 
@@ -113,26 +243,36 @@ return [
             'customer_resolver' => null,
         ],
 
-        // Second rail: Tempo (on-chain stablecoin), speaking the mppx wire
-        // dialect so a stock `npx mppx <url> --network testnet` agent can pay a
-        // route gated with `mpp:…,method=tempo`. Pure-PHP, no Node sidecar and no
-        // server signing key: the client signs a complete pathUSD transfer and
+        // Second rail: Tempo (on-chain stablecoin), payable by a stock
+        // `npx mppx <url>` agent. Pure-PHP, no Node sidecar and no server
+        // signing key: the client signs a complete pathUSD transfer and
         // pays its own gas; the package only verifies the signed transaction
         // against the challenge, broadcasts it via eth_sendRawTransaction, and
-        // confirms it mined. Set `default_method=tempo` or use
-        // `method=tempo` on a route to offer it.
+        // confirms it mined. Offer it alone (`method=tempo` / `default_method`)
+        // or alongside stripe (`accept` above, or `methods=stripe|tempo`).
         'tempo' => [
             'verifier' => TempoVerifier::class,
+
+            // The three network values below (rpc_url, chain_id, token) DEFAULT
+            // TO MODERATO TESTNET, so the rail is payable out of the box with
+            // only a `recipient` set. FOR MAINNET, SET ALL THREE TOGETHER:
+            //   rpc_url  = your Tempo mainnet JSON-RPC endpoint
+            //   chain_id = 4217
+            //   token    = 0x20C000000000000000000000b9537d11c60E8b50
+            // NEVER MIX NETWORKS — a mainnet token on the testnet chain (or
+            // vice versa) reverts `TIP20: Uninitialized`.
 
             // The Tempo JSON-RPC endpoint the package broadcasts through.
             'rpc_url' => env('TEMPO_RPC_URL', 'https://rpc.moderato.tempo.xyz'),
 
-            // The chain id the signed transaction must target (Tempo testnet).
+            // The chain id the signed transaction must target. Moderato testnet
+            // is 42431; Tempo mainnet is 4217.
             'chain_id' => (int) env('TEMPO_CHAIN_ID', 42431),
 
             // The TIP-20 token (pathUSD) the transfer must be denominated in, and
             // its decimals (used to convert the route's decimal amount to minor
-            // units). `currency` is accepted as an alias for `token`.
+            // units). Defaults to Moderato testnet pathUSD; mainnet pathUSD is
+            // 0x20C000000000000000000000b9537d11c60E8b50.
             'token' => env('TEMPO_TOKEN', '0x20c0000000000000000000000000000000000000'),
             'decimals' => (int) env('TEMPO_DECIMALS', 6),
 
@@ -144,18 +284,9 @@ return [
             // Finality: confirmations required before the resource is served.
             'confirmations' => (int) env('TEMPO_MIN_CONFIRMATIONS', 1),
 
-            // The realm advertised in the 402 and bound into the on-chain
-            // attribution memo. Null follows the request host (mppx's default).
-            'realm' => env('TEMPO_REALM'),
-
             // Receipt polling: how long to wait for the broadcast tx to mine.
             'poll_attempts' => (int) env('TEMPO_POLL_ATTEMPTS', 40),
             'poll_delay_ms' => (int) env('TEMPO_POLL_DELAY_MS', 500),
-
-            // Advertised in the native dialect's accept entry (unused when tempo
-            // is the sole/primary method and the mppx dialect is emitted).
-            'network_id' => env('TEMPO_NETWORK_ID'),
-            'payment_method_types' => ['stablecoin'],
         ],
     ],
 

@@ -6,15 +6,26 @@ use Square1\Mpp\Exceptions\InvalidConfigurationException;
 
 /**
  * Convert between decimal amount strings (e.g. "0.50") and Stripe minor units
- * (integer cents). Pure string maths — no bcmath dependency, no float drift.
+ * (integer cents). String and BCMath maths, no float drift, and it fails closed
+ * rather than saturating an out-of-range amount.
  */
 class Money
 {
-    /** @var list<string> Currencies Stripe charges in whole (zero-decimal) units. */
+    /**
+     * @var list<string> Currencies Stripe charges in whole (zero-decimal) units,
+     *                   where the minor-unit amount equals the whole amount.
+     */
     private const ZERO_DECIMAL = [
         'BIF', 'CLP', 'DJF', 'GNF', 'JPY', 'KMF', 'KRW', 'MGA',
-        'PYG', 'RWF', 'UGX', 'VND', 'VUV', 'XAF', 'XOF', 'XPF',
+        'PYG', 'RWF', 'VND', 'VUV', 'XAF', 'XOF', 'XPF',
     ];
+
+    /**
+     * @var list<string> Currencies Stripe treats as zero-decimal but requires to
+     *                   be sent as a two-decimal value ending in `00` (whole units only). See
+     *                   https://docs.stripe.com/currencies special cases.
+     */
+    private const WHOLE_UNIT = ['ISK', 'UGX'];
 
     public static function decimals(string $currency): int
     {
@@ -62,7 +73,27 @@ class Money
 
         $frac = substr(str_pad($frac, $decimals, '0'), 0, $decimals);
 
-        $minor = (int) ($whole.$frac);
+        // Digit string of the value in minor units, with leading zeros trimmed
+        // for a clean numeric comparison.
+        $minorDigits = ltrim($whole.$frac, '0');
+        $minorDigits = $minorDigits === '' ? '0' : $minorDigits;
+
+        // Fail closed above PHP_INT_MAX instead of saturating the (int) cast.
+        if (bccomp($minorDigits, (string) PHP_INT_MAX) > 0) {
+            throw new InvalidConfigurationException(
+                "Money amount '{$amount}' exceeds the maximum supported minor-unit value for {$currency}."
+            );
+        }
+
+        $minor = (int) $minorDigits;
+
+        // ISK and UGX must be whole units (minor units divisible by 100). Reject
+        // a fractional amount rather than charging a value Stripe forbids.
+        if (in_array(strtoupper($currency), self::WHOLE_UNIT, true) && $minor % 100 !== 0) {
+            throw new InvalidConfigurationException(
+                "Money amount '{$amount}' must be a whole {$currency}; Stripe does not allow fractional {$currency}."
+            );
+        }
 
         return $negative ? -$minor : $minor;
     }

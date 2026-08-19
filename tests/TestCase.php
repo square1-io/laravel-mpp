@@ -12,7 +12,9 @@ use Square1\Mpp\Tests\Fakes\FakeTempoVerifier;
 use Square1\Mpp\Tests\Fakes\FakeVerifier;
 use Square1\Mpp\Tests\Fakes\PaidController;
 use Square1\Mpp\Tests\Fakes\RegionPricing;
+use Square1\Mpp\Tests\Fakes\SideEffectCounter;
 use Square1\Mpp\Tests\Fakes\TieredPricing;
+use Symfony\Component\HttpFoundation\StreamedResponse;
 
 abstract class TestCase extends OrchestraTestCase
 {
@@ -25,25 +27,27 @@ abstract class TestCase extends OrchestraTestCase
     {
         $app['config']->set('mpp.secret', 'test-challenge-secret-do-not-use-in-production');
         $app['config']->set('cache.default', 'array');
-        // Settle deterministically without touching Stripe.
+        // The test HTTP kernel serves over http; allow it (production requires TLS).
+        $app['config']->set('mpp.allow_insecure', true);
+        // Settle deterministically without touching Stripe. network_id and
+        // payment_method_types are set so a stripe challenge is spec-conformant
+        // (the Stripe method requires both in methodDetails).
         $app['config']->set('mpp.methods.stripe.verifier', FakeVerifier::class);
+        $app['config']->set('mpp.methods.stripe.network_id', 'profile_test');
+        $app['config']->set('mpp.methods.stripe.payment_method_types', ['card']);
 
         // A second rail for multi-accept / gate-routing tests. `accept` stays
         // null so single-method routes keep offering only stripe (back-compat),
         // even though tempo is configured.
         //
-        // The `token`/`recipient`/`chain_id`/`decimals` make a tempo-PRIMARY route
-        // mint a real mppx-dialect challenge; the FakeTempoVerifier still backs the
-        // NATIVE multi-rail path (where tempo is a non-primary accept entry).
+        // The `token`/`recipient`/`chain_id`/`decimals` let a tempo route mint a
+        // real challenge; the FakeTempoVerifier stands in for settlement.
         $app['config']->set('mpp.methods.tempo', [
             'verifier' => FakeTempoVerifier::class,
-            'network_id' => 'tempo-testnet',
-            'payment_method_types' => ['stablecoin'],
-            'token' => '0x20c0000000000000000000000000000000000000',
+            'token' => '0x20C000000000000000000000b9537d11c60E8b50',
             'recipient' => '0x0dcd39a3f85aa288c1b2825bc41eb7e9bb2abf70',
-            'chain_id' => 42431,
+            'chain_id' => 4217,
             'decimals' => 6,
-            'realm' => 'localhost',
             'confirmations' => 1,
             'poll_attempts' => 1,
             'poll_delay_ms' => 0,
@@ -77,6 +81,47 @@ abstract class TestCase extends OrchestraTestCase
         Route::get('/clip', fn () => response('CLIP', 200))->middleware('mpp:0.50,USD');
         Route::get('/report', fn () => response()->json(['report' => 'ok']))
             ->middleware('mpp:5.00,USD,grants=10,scope=report.basic');
+
+        // A route whose action has a side effect (bumps a counter), so a test can
+        // prove settlement runs the action once and a replay does not re-run it.
+        Route::get('/sideeffect', function () {
+            SideEffectCounter::$hits++;
+
+            return response()->json(['hits' => SideEffectCounter::$hits]);
+        })->middleware('mpp:0.50,USD,scope=sideeffect');
+
+        // Two routes deliberately sharing ONE scope at different prices, to prove
+        // a challenge is bound to its route identity, not just its scope.
+        Route::get('/shared/cheap', fn () => response('CHEAP', 200))
+            ->middleware('mpp:0.50,USD,scope=shared');
+        Route::get('/shared/pricey', fn () => response('PRICEY', 200))
+            ->middleware('mpp:5.00,USD,scope=shared');
+
+        // A body-carrying route, to prove the RFC 9530 request-body digest binding.
+        Route::post('/body', fn () => response('BODY', 200))
+            ->middleware('mpp:0.50,USD,scope=body');
+
+        // A PARAMETERIZED route (one pattern, many concrete targets) and a
+        // query-driven route, to prove challenges bind the concrete request
+        // target, not just the route pattern. Both share one scope so only the
+        // target distinguishes them.
+        Route::get('/item/{tier}', fn (string $tier) => response('ITEM '.$tier, 200))
+            ->middleware('mpp:0.50,USD,scope=item');
+        Route::get('/q', fn () => response('Q', 200))
+            ->middleware('mpp:0.50,USD,scope=q');
+
+        // A route that sets extra response headers, to prove the replay snapshot
+        // restores all of them (not just Content-Type).
+        Route::get('/hdr', fn () => response('HDR', 200)
+            ->header('X-Custom', 'xyz')
+            ->header('Location', '/elsewhere'))
+            ->middleware('mpp:0.50,USD,scope=hdr');
+
+        // A streamed response, whose body is never buffered: the gate must not
+        // snapshot it, so a lost-response retry fails safe to a fresh challenge.
+        Route::get('/stream', fn () => new StreamedResponse(function () {
+            echo 'STREAMED';
+        }, 200))->middleware('mpp:0.50,USD,scope=stream');
 
         // Multi-rail route: offers stripe + tempo via the middleware `methods=` arg.
         Route::get('/multi', fn () => response('MULTI', 200))

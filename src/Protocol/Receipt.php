@@ -5,6 +5,8 @@ namespace Square1\Mpp\Protocol;
 use Carbon\CarbonImmutable;
 use Illuminate\Support\Str;
 use Square1\Mpp\Settlement\SettlementResult;
+use Square1\Mpp\Support\Base64Url;
+use Square1\Mpp\Support\Jcs;
 use Square1\Mpp\Support\Money;
 
 /**
@@ -28,12 +30,22 @@ class Receipt
 
     public static function fromSettlement(Challenge $challenge, SettlementResult $result, ?string $method = null): self
     {
+        $currency = $result->currency ?? $challenge->currency();
+
+        // ISO currencies render as decimal via Money; token-address currencies
+        // (tempo) pass their base units through untouched.
+        // ISO minor units are bounded fiat, so an int is safe; a token amount is
+        // kept as its exact decimal string (it can exceed PHP_INT_MAX).
+        $amount = preg_match('/^[A-Za-z]{3}$/', $currency)
+            ? Money::fromMinorUnits((int) ($result->amountMinor ?? 0), $currency)
+            : (string) ($result->amountMinor ?? $challenge->amount());
+
         return new self(
             id: 'rcpt_'.Str::ulid(),
             challengeId: $challenge->id,
             method: $method ?? $challenge->method,
-            amount: Money::fromMinorUnits($result->amountMinor ?? 0, $result->currency ?? $challenge->currency),
-            currency: $result->currency ?? $challenge->currency,
+            amount: $amount,
+            currency: $currency,
             settlementRef: (string) $result->settlementRef,
             settledAt: $result->settledAt ?? CarbonImmutable::now(),
         );
@@ -41,21 +53,18 @@ class Receipt
 
     public function header(): string
     {
-        $parts = [
-            'id' => $this->id,
-            'challengeId' => $this->challengeId,
+        // Spec receipt: base64url(JCS JSON), status always "success" (receipts
+        // are only issued on successful settlement), `reference` carries the
+        // rail's settlement id. Package extras (challengeId, amount) are
+        // additional fields, which method specs explicitly permit.
+        return Base64Url::encode(Jcs::encode([
+            'status' => 'success',
             'method' => $this->method,
+            'timestamp' => $this->settledAt->toIso8601ZuluString(),
+            'reference' => $this->settlementRef,
+            'challengeId' => $this->challengeId,
             'amount' => $this->amount,
             'currency' => $this->currency,
-            // Rail-neutral settlement reference, present for every method.
-            'ref' => $this->settlementRef,
-            'settledAt' => $this->settledAt->toIso8601ZuluString(),
-        ];
-
-        return implode(', ', array_map(
-            fn ($key, $value) => sprintf('%s="%s"', $key, $value),
-            array_keys($parts),
-            array_values($parts),
-        ));
+        ]));
     }
 }

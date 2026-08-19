@@ -11,8 +11,7 @@ namespace Square1\Mpp\Support\Evm;
  * Keccak-256 in three places this package must reproduce byte-for-byte:
  *
  *   - ABI function selectors (`keccak256(signature)[0..4]`),
- *   - the on-chain transaction hash (`keccak256(serializedTransaction)`),
- *   - the MPP attribution memo fingerprints (server fp, challenge nonce).
+ *   - the on-chain transaction hash (`keccak256(serializedTransaction)`).
  *
  * Implemented over GMP so it works wherever the package runs without a native
  * keccak build. It is only used on small inputs (a few hundred bytes at most),

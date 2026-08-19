@@ -11,8 +11,6 @@ function spec(array $overrides = []): PaymentSpec
         grants: $overrides['grants'] ?? 1,
         scope: $overrides['scope'] ?? 'report.basic',
         method: 'stripe',
-        networkId: 'profile_123',
-        paymentMethodTypes: ['card'],
         offeredMethods: ['stripe', 'other'],
         preconditions: ['postexists'],
         pricing: ['tiered'],
@@ -34,8 +32,6 @@ it('carries the rail fields and the route’s lists through unchanged', function
     $priced = spec()->with(['amount' => '2.00', 'scope' => 'report.pro']);
 
     expect($priced->method)->toBe('stripe')
-        ->and($priced->networkId)->toBe('profile_123')
-        ->and($priced->paymentMethodTypes)->toBe(['card'])
         ->and($priced->offeredMethods)->toBe(['stripe', 'other'])
         ->and($priced->preconditions)->toBe(['postexists'])
         ->and($priced->pricing)->toBe(['tiered']);

@@ -3,7 +3,6 @@
 namespace Square1\Mpp\Payment;
 
 use Square1\Mpp\Exceptions\InvalidConfigurationException;
-use Square1\Mpp\Protocol\ChallengeOffer;
 use Square1\Mpp\Support\Money;
 
 /**
@@ -30,7 +29,6 @@ final class PaymentSpec
      *                           its resolvers. Resolved before the spec reaches the gate: a
      *                           chargeable spec always has an amount by then, so only a price
      *                           resolver can ever be handed a null one.
-     * @param  list<string>  $paymentMethodTypes  the PRIMARY method's payment method types
      * @param  list<string>  $offeredMethods  ordered set of offered method names (primary first)
      * @param  list<string>  $preconditions  named precondition checks to run before a challenge is minted or settled
      * @param  list<string>  $pricing  named price resolvers to apply to this route, in order
@@ -42,8 +40,6 @@ final class PaymentSpec
         public readonly int $grants,
         public readonly string $scope,
         public readonly string $method,
-        public readonly ?string $networkId = null,
-        public readonly array $paymentMethodTypes = ['card'],
         public readonly array $offeredMethods = [],
         public readonly array $preconditions = [],
         public readonly array $pricing = [],
@@ -69,10 +65,9 @@ final class PaymentSpec
      * Return a copy with a price resolver's overrides applied.
      *
      * Only `amount`, `currency`, `grants`, `scope` and `free` may be overridden;
-     * the rail fields (`method`, `offeredMethods`, `networkId`,
-     * `paymentMethodTypes`) are resolved once by the SpecResolver and are not a
-     * resolver's to change. An unrecognised key throws rather than being ignored,
-     * so a typo can never silently serve the wrong price.
+     * the rail fields (`method`, `offeredMethods`) are resolved once by the
+     * SpecResolver and are not a resolver's to change. An unrecognised key throws
+     * rather than being ignored, so a typo can never silently serve the wrong price.
      *
      * A free route must be stated as `free => true`. A zero, negative or
      * non-numeric `amount` is rejected, so a resolver that computes an empty or
@@ -108,8 +103,6 @@ final class PaymentSpec
             grants: $this->overrideGrants($overrides),
             scope: $this->overrideString($overrides, 'scope', $this->scope, upper: false, hint: 'Return a non-empty scope, or omit the key.'),
             method: $this->method,
-            networkId: $this->networkId,
-            paymentMethodTypes: $this->paymentMethodTypes,
             offeredMethods: $this->offeredMethods,
             preconditions: $this->preconditions,
             pricing: $this->pricing,
@@ -208,50 +201,5 @@ final class PaymentSpec
         }
 
         return (int) $grants;
-    }
-
-    /**
-     * Shape expected by ChallengeFactory::mint(). The primary method's binding
-     * fields stay at the top level (so a single-method spec mints an unchanged
-     * challenge); any additional offered methods become `offers[]`.
-     *
-     * @return array<string, mixed>
-     */
-    public function toChallengeSpec(): array
-    {
-        // The pipeline refuses an unpriced spec long before this, so this cannot
-        // fire in normal operation. It stays because the alternative to catching
-        // a broken invariant here is minting a signed challenge for an empty
-        // amount, and a money path should not degrade quietly.
-        if (! $this->isPriced()) {
-            throw new InvalidConfigurationException(
-                "Cannot mint a challenge for scope '{$this->scope}': the spec has no amount."
-            );
-        }
-
-        $offers = [];
-        foreach ($this->offeredMethods as $method) {
-            if ($method === $this->method) {
-                continue; // the primary is represented at the top level
-            }
-
-            $config = config("mpp.methods.{$method}", []);
-            $offers[] = new ChallengeOffer(
-                method: $method,
-                networkId: $config['network_id'] ?? null,
-                paymentMethodTypes: $config['payment_method_types'] ?? ['card'],
-            );
-        }
-
-        return [
-            'method' => $this->method,
-            'amount' => $this->amount,
-            'currency' => $this->currency,
-            'grants' => $this->grants,
-            'scope' => $this->scope,
-            'networkId' => $this->networkId,
-            'paymentMethodTypes' => $this->paymentMethodTypes,
-            'offers' => $offers,
-        ];
     }
 }

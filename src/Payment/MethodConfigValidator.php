@@ -19,15 +19,16 @@ use Square1\Mpp\Settlement\TempoVerifier;
  *
  *   REQUIRED    A missing value makes the minted 402 *itself* malformed or
  *               unpayable — e.g. a Tempo challenge with no recipient instructs
- *               the client to pay nobody. Throws InvalidConfigurationException
- *               so the misconfiguration surfaces on the first request, not as a
+ *               the client to pay nobody, and a Stripe challenge with no
+ *               network_id omits a methodDetails member the Stripe charge method
+ *               requires. Throws InvalidConfigurationException so the
+ *               misconfiguration surfaces on the first request, not as a
  *               confusing settlement failure later (or never).
  *
  *   RECOMMENDED The challenge is well-formed and payable, but settlement is
- *               impaired (no Stripe secret key) or a buyer wallet cannot scope a
- *               token to this seller (no network_id). Logged once per process as
- *               a warning, never fatal — so "emit the 402 now, set the key to
- *               settle later" stays a valid workflow.
+ *               impaired — no Stripe secret key, no Tempo JSON-RPC endpoint.
+ *               Logged once per process as a warning, never fatal — so "emit the
+ *               402 now, set the key to settle later" stays a valid workflow.
  */
 class MethodConfigValidator
 {
@@ -37,67 +38,39 @@ class MethodConfigValidator
         'rpc_url' => ['rpc'],
     ];
 
+    /**
+     * Config keys that go on the wire as a JSON array, so a scalar is as wrong
+     * as an absent value: it would render methodDetails unconformant.
+     */
+    private const LIST_KEYS = ['payment_method_types'];
+
     /** @var array<string, bool> "method.key" flags already warned this process. */
     private array $warned = [];
 
     /**
-     * Validate every method a resolved spec offers, and that the offered set
-     * doesn't mix wire dialects (see assertSingleDialect).
+     * Validate every method a resolved spec offers.
      */
     public function validate(PaymentSpec $spec): void
     {
-        $this->assertSingleDialect($spec->offeredMethods);
-
         foreach ($spec->offeredMethods as $method) {
             $this->validateMethod($method);
         }
     }
 
-    /**
-     * A single 402 carries one wire dialect. The mppx-dialect rail (Tempo) emits
-     * a base64 `request` blob with no signed accepts[], which a native/SPT agent
-     * can't read — and a stock mppx agent can't read a native accepts[] entry. So
-     * the mppx rail can't be co-offered alongside native rails: it must be the
-     * sole/primary method. Fail fast rather than mint a 402 that silently drops a
-     * rail (mppx primary) or lists an unpayable one (native primary).
-     *
-     * Keyed on the verifier, like the per-rail rules — a custom or test verifier
-     * registered under a method name counts as native and is exempt.
-     *
-     * @param  list<string>  $offered
-     */
-    private function assertSingleDialect(array $offered): void
-    {
-        if (count($offered) < 2) {
-            return;
-        }
-
-        $mppx = array_values(array_filter($offered, fn (string $m): bool => $this->isMppxDialect($m)));
-
-        if ($mppx === []) {
-            return;
-        }
-
-        throw new InvalidConfigurationException(sprintf(
-            "The '%s' rail speaks the mppx wire dialect and can't be co-offered with native rails "
-            ."in one 402 (this route offers: %s). A 402 carries a single dialect, so make '%s' the "
-            .'sole/primary method (e.g. method=%s, or default_method=%s), or choose the rail per '
-            .'request before the middleware runs. See "Can One Route Offer Both Rails?" in the README.',
-            $mppx[0],
-            implode('|', $offered),
-            $mppx[0],
-            $mppx[0],
-            $mppx[0],
-        ));
-    }
-
-    private function isMppxDialect(string $method): bool
-    {
-        return (config("mpp.methods.{$method}.verifier") ?? null) === TempoVerifier::class;
-    }
-
     public function validateMethod(string $method): void
     {
+        // The method identifier goes on the wire as the challenge `method`. The
+        // core draft restricts it to one or more lowercase ASCII letters
+        // (1*LOWERALPHA), so a misconfigured custom rail cannot mint a
+        // non-conformant challenge. Checked before the verifier, so it also
+        // covers custom rails the rule table does not know.
+        if (preg_match('/^[a-z]+$/D', $method) !== 1) {
+            throw new InvalidConfigurationException(
+                "The payment method identifier '{$method}' is not valid. The MPP core spec "
+                .'restricts method identifiers to one or more lowercase ASCII letters (a-z).'
+            );
+        }
+
         $config = (array) config("mpp.methods.{$method}", []);
         $rule = $this->ruleFor($config['verifier'] ?? null);
 
@@ -130,12 +103,15 @@ class MethodConfigValidator
     {
         return match ($verifier) {
             StripeVerifier::class => [
-                // The Stripe 402 mints (and is payable) without a secret key — the
-                // key is a settle-time secret — so nothing here is fatal.
-                'required' => [],
+                // Both of these are advertised in the challenge's methodDetails and
+                // the Stripe charge method requires them: without network_id a Link
+                // / agent wallet cannot scope a Shared Payment Token to this seller,
+                // and without payment_method_types it does not know what it may
+                // grant. The secret key is a settle-time secret only, so the 402
+                // still mints (and is payable) without it.
+                'required' => ['network_id', 'payment_method_types'],
                 'recommended' => [
                     'secret_key' => 'Stripe settlement will fail until a secret key is set; the 402 challenge is still emitted (set STRIPE_SECRET_KEY).',
-                    'network_id' => 'a Link / agent wallet cannot scope a Shared Payment Token to this seller without the MPP Network/Profile ID advertised in the 402 (set STRIPE_NETWORK_ID, a profile_… created in the Stripe Dashboard).',
                 ],
                 'env' => ['secret_key' => 'STRIPE_SECRET_KEY', 'network_id' => 'STRIPE_NETWORK_ID'],
             ],
@@ -162,10 +138,18 @@ class MethodConfigValidator
      */
     private function present(array $config, string $key): bool
     {
+        $mustBeList = in_array($key, self::LIST_KEYS, strict: true);
+
         foreach (array_merge([$key], self::ALIASES[$key] ?? []) as $candidate) {
-            if (array_key_exists($candidate, $config) && ! $this->isBlank($config[$candidate])) {
-                return true;
+            if (! array_key_exists($candidate, $config) || $this->isBlank($config[$candidate])) {
+                continue;
             }
+
+            if ($mustBeList && ! is_array($config[$candidate])) {
+                continue;
+            }
+
+            return true;
         }
 
         return false;
@@ -175,6 +159,10 @@ class MethodConfigValidator
     {
         if ($value === null) {
             return true;
+        }
+
+        if (is_array($value)) {
+            return $value === [];
         }
 
         if (is_int($value)) {

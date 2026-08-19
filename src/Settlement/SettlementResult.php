@@ -15,7 +15,9 @@ class SettlementResult
     public function __construct(
         public readonly bool $succeeded,
         public readonly ?string $settlementRef = null,
-        public readonly ?int $amountMinor = null,
+        // Minor units. A string keeps an on-chain amount exact above PHP_INT_MAX;
+        // fiat rails may pass an int.
+        public readonly int|string|null $amountMinor = null,
         public readonly ?string $currency = null,
         public readonly ?CarbonImmutable $settledAt = null,
         public readonly ?string $failureReason = null,
@@ -24,13 +26,13 @@ class SettlementResult
     /**
      * Construct a successful result from a rail-neutral settlement reference.
      */
-    public static function settled(string $settlementRef, int $amountMinor, string $currency, ?CarbonImmutable $settledAt = null): self
+    public static function settled(string $settlementRef, int|string|null $amountMinor = null, ?string $currency = null, ?CarbonImmutable $settledAt = null): self
     {
         return new self(
             succeeded: true,
             settlementRef: $settlementRef,
             amountMinor: $amountMinor,
-            currency: strtoupper($currency),
+            currency: $currency === null ? null : strtoupper($currency),
             settledAt: $settledAt ?? CarbonImmutable::now(),
         );
     }
