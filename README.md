@@ -399,6 +399,15 @@ GET /resource HTTP/1.1
 Accept-Payment: tempo/charge, stripe/charge;q=0.3
 ```
 
+The same preference can be sent by a payment client. For example, this selects
+Tempo on a route that offers both methods:
+
+```bash
+npx mppx https://your-host/resource \
+  -H 'Accept-Payment: tempo/charge' \
+  --network testnet --account <your-account>
+```
+
 The server filters and ranks its offered challenges by the header. q-values, wildcards (`tempo/*`), and `q=0` exclusions all work as in `Accept`. A caller that sends nothing gets the full offered set in your configured order. A header that matches nothing is ignored per spec, so a caller can never obtain a rail you did not offer.
 
 ### Discovery
