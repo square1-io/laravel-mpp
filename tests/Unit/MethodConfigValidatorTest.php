@@ -7,6 +7,7 @@ use Square1\Mpp\Payment\PaymentSpec;
 use Square1\Mpp\Settlement\StripeVerifier;
 use Square1\Mpp\Settlement\TempoVerifier;
 use Square1\Mpp\Tests\Fakes\FakeTempoVerifier;
+use Square1\Mpp\Tests\Fakes\FakeVerifier;
 
 beforeEach(function () {
     $this->validator = new MethodConfigValidator;
@@ -80,27 +81,64 @@ it('accepts `rpc` as an alias for the Tempo rpc_url', function () {
     Log::shouldNotHaveReceived('warning');
 });
 
-it('warns but never throws when the Stripe rail lacks a secret key or network id', function () {
-    Log::spy();
-    config()->set('mpp.methods.stripe', [
+/**
+ * @param  array<string, mixed>  $overrides
+ * @return array<string, mixed>
+ */
+function completeStripeConfig(array $overrides = []): array
+{
+    return array_merge([
         'verifier' => StripeVerifier::class,
-        'secret_key' => null,
-        'network_id' => null,
-    ]);
+        'secret_key' => 'sk_test_x',
+        'network_id' => 'profile_test',
+        'payment_method_types' => ['card'],
+    ], $overrides);
+}
 
+it('warns but never throws when the Stripe rail lacks only its secret key', function () {
+    Log::spy();
+    config()->set('mpp.methods.stripe', completeStripeConfig(['secret_key' => null]));
+
+    // The key is a settle-time secret; the 402 is still well-formed and payable.
     expect(fn () => $this->validator->validateMethod('stripe'))
         ->not->toThrow(InvalidConfigurationException::class);
 
-    Log::shouldHaveReceived('warning')->twice();
+    Log::shouldHaveReceived('warning')->once();
+});
+
+it('fails fast when the Stripe rail is missing its network id', function () {
+    // Without network_id the minted 402 omits a methodDetails member the Stripe
+    // charge method requires, and no wallet can scope an SPT to this seller.
+    config()->set('mpp.methods.stripe', completeStripeConfig(['network_id' => null]));
+
+    expect(fn () => $this->validator->validateMethod('stripe'))
+        ->toThrow(InvalidConfigurationException::class, 'network_id (STRIPE_NETWORK_ID)');
+});
+
+it('fails fast when the Stripe rail has no payment method types', function () {
+    config()->set('mpp.methods.stripe', completeStripeConfig(['payment_method_types' => []]));
+
+    expect(fn () => $this->validator->validateMethod('stripe'))
+        ->toThrow(InvalidConfigurationException::class, 'payment_method_types');
+});
+
+it('rejects a scalar where the wire needs a list of payment method types', function () {
+    config()->set('mpp.methods.stripe', completeStripeConfig(['payment_method_types' => 'card']));
+
+    expect(fn () => $this->validator->validateMethod('stripe'))
+        ->toThrow(InvalidConfigurationException::class, 'payment_method_types');
+});
+
+it('fails fast when a stripe rail is configured with neither wire requirement', function () {
+    config()->set('mpp.methods.stripe', ['verifier' => StripeVerifier::class]);
+
+    expect(fn () => $this->validator->validateMethod('stripe'))
+        ->toThrow(InvalidConfigurationException::class, 'network_id (STRIPE_NETWORK_ID), payment_method_types');
 });
 
 it('treats an unexpanded env placeholder as missing', function () {
     Log::spy();
-    config()->set('mpp.methods.stripe', [
-        'verifier' => StripeVerifier::class,
-        'secret_key' => '${STRIPE_SECRET_KEY}',
-        'network_id' => 'profile_live',
-    ]);
+    config()->set('mpp.methods.stripe', completeStripeConfig(['secret_key' => '${STRIPE_SECRET_KEY}']));
 
     $this->validator->validateMethod('stripe');
 
@@ -109,12 +147,12 @@ it('treats an unexpanded env placeholder as missing', function () {
 
 it('logs each recommended-config warning only once per process', function () {
     Log::spy();
-    config()->set('mpp.methods.stripe', ['verifier' => StripeVerifier::class]);
+    config()->set('mpp.methods.stripe', completeStripeConfig(['secret_key' => null]));
 
     $this->validator->validateMethod('stripe');
     $this->validator->validateMethod('stripe');
 
-    Log::shouldHaveReceived('warning')->twice(); // not four times
+    Log::shouldHaveReceived('warning')->once(); // not twice
 });
 
 it('skips validation entirely for a custom verifier', function () {
@@ -143,28 +181,19 @@ it('validates the offered rail config through validate()', function () {
         ->toThrow(InvalidConfigurationException::class, "'tempo' payment rail");
 });
 
-it('rejects co-offering the mppx rail (Tempo) with a native rail', function () {
-    config()->set('mpp.methods.tempo.verifier', TempoVerifier::class);
+it('allows stripe and tempo to be co-offered on the unified spec wire', function () {
+    config()->set('mpp.methods.stripe', completeStripeConfig());
+    config()->set('mpp.methods.tempo.verifier', TempoVerifier::class); // recipient/token/chain_id from TestCase
 
     $spec = new PaymentSpec(
         amount: '0.50', currency: 'USD', grants: 1, scope: 'x',
         method: 'stripe', offeredMethods: ['stripe', 'tempo'],
     );
 
+    // v1 forbade this (two wire dialects); v2 mints one spec-format challenge
+    // per rail in a single 402, so the restriction is gone.
     expect(fn () => $this->validator->validate($spec))
-        ->toThrow(InvalidConfigurationException::class, 'mppx');
-});
-
-it('rejects the mppx rail co-offered even when it is the primary method', function () {
-    config()->set('mpp.methods.tempo.verifier', TempoVerifier::class);
-
-    $spec = new PaymentSpec(
-        amount: '0.01', currency: 'USD', grants: 1, scope: 'x',
-        method: 'tempo', offeredMethods: ['tempo', 'stripe'],
-    );
-
-    expect(fn () => $this->validator->validate($spec))
-        ->toThrow(InvalidConfigurationException::class, 'co-offered');
+        ->not->toThrow(InvalidConfigurationException::class);
 });
 
 it('allows the mppx rail as the sole offered method', function () {
@@ -180,7 +209,7 @@ it('allows the mppx rail as the sole offered method', function () {
 });
 
 it('allows several native rails to be co-offered', function () {
-    config()->set('mpp.methods.stripe', ['verifier' => StripeVerifier::class, 'secret_key' => 'sk_test', 'network_id' => 'profile_x']);
+    config()->set('mpp.methods.stripe', completeStripeConfig());
     config()->set('mpp.methods.other', ['verifier' => 'App\\Settlement\\OtherVerifier']);
 
     $spec = new PaymentSpec(
@@ -192,8 +221,8 @@ it('allows several native rails to be co-offered', function () {
         ->not->toThrow(InvalidConfigurationException::class);
 });
 
-it('treats a non-Tempo verifier under the tempo name as native (exempt from the dialect guard)', function () {
-    // This is what the suite's FakeTempoVerifier relies on to exercise native multi-accept.
+it('validates a custom verifier under the tempo name without rail-specific rules', function () {
+    // Custom verifiers own their config; only shipped rails get keyed rules.
     config()->set('mpp.methods.tempo.verifier', FakeTempoVerifier::class);
 
     $spec = new PaymentSpec(
@@ -202,5 +231,29 @@ it('treats a non-Tempo verifier under the tempo name as native (exempt from the 
     );
 
     expect(fn () => $this->validator->validate($spec))
+        ->not->toThrow(InvalidConfigurationException::class);
+});
+
+// ── method identifier format (core draft: 1*LOWERALPHA) ──────────────────────
+
+it('rejects a method identifier that is not lowercase ASCII letters', function (string $method) {
+    // The identifier lands on the wire as the challenge `method`, so a
+    // non-conformant name must fail before it can mint a challenge — even for a
+    // custom rail the rule table does not know.
+    config()->set("mpp.methods.{$method}.verifier", FakeVerifier::class);
+
+    expect(fn () => $this->validator->validateMethod($method))
+        ->toThrow(InvalidConfigurationException::class, 'lowercase ASCII letters');
+})->with([
+    'uppercase' => 'AcmePay',
+    'digit' => 'acme2',
+    'hyphen' => 'acme-pay',
+    'empty' => '',
+]);
+
+it('accepts an all-lowercase custom method identifier', function () {
+    config()->set('mpp.methods.acmepay.verifier', FakeVerifier::class);
+
+    expect(fn () => $this->validator->validateMethod('acmepay'))
         ->not->toThrow(InvalidConfigurationException::class);
 });

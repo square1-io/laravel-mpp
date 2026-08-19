@@ -102,7 +102,6 @@ class SpecResolver
 
         $offered = $this->resolveOfferedMethods($method, $methods);
         $primary = $offered[0];
-        $methodConfig = config("mpp.methods.{$primary}", []);
 
         return new PaymentSpec(
             amount: $amount,
@@ -110,8 +109,6 @@ class SpecResolver
             grants: max(1, $grants),
             scope: $scope ?: $this->defaultScope($request),
             method: $primary,
-            networkId: $methodConfig['network_id'] ?? null,
-            paymentMethodTypes: $methodConfig['payment_method_types'] ?? ['card'],
             offeredMethods: $offered,
             preconditions: $preconditions,
             pricing: $pricing,

@@ -2,102 +2,108 @@
 
 use Square1\Mpp\Tests\Fakes\FakeTempoVerifier;
 use Square1\Mpp\Tests\Fakes\FakeVerifier;
-use Square1\Mpp\Tests\TestCase;
 
+/**
+ * Multi-rail behaviour on the spec wire: `/multi` offers stripe + tempo, so a
+ * single 402 carries TWO `Payment …` challenges — each with its own binding
+ * id — and the client answers exactly one.
+ */
 beforeEach(function () {
     FakeVerifier::reset();
     FakeTempoVerifier::reset();
 });
 
-/**
- * Fetch the /multi 402 and return its challenge id + per-method accepts keyed by
- * method name.
- *
- * @return array{id:string, accepts: array<string, array<string,mixed>>}
- */
-function multiChallenge(TestCase $test): array
-{
-    $response = $test->get('/multi');
-    $accepts = [];
-    foreach ((array) $response->json('accepts') as $accept) {
-        $accepts[$accept['method']] = $accept;
-    }
+it('offers one challenge per rail in a single 402', function () {
+    $response = $this->get('/multi')->assertStatus(402);
 
-    return ['id' => (string) $response->json('challengeId'), 'accepts' => $accepts];
-}
+    $challenges = parseChallenges($response->headers->get('WWW-Authenticate'));
+    $byMethod = array_column($challenges, null, 'method');
 
-function payWithProof(TestCase $test, string $method, string $challengeId, string $sig, string $proofAttr, string $proof)
-{
-    return $test->withHeaders([
-        'Authorization' => sprintf(
-            'Payment method="%s", challengeId="%s", sig="%s", %s="%s"',
-            $method,
-            $challengeId,
-            $sig,
-            $proofAttr,
-            $proof,
-        ),
-    ])->get('/multi');
-}
+    expect($challenges)->toHaveCount(2)
+        ->and($byMethod)->toHaveKeys(['stripe', 'tempo'])
+        ->and($byMethod['stripe']['id'])->not->toBe($byMethod['tempo']['id'])
+        ->and($byMethod['stripe']['intent'])->toBe('charge')
+        ->and($byMethod['tempo']['intent'])->toBe('charge');
+});
 
-it('offers both methods in the 402', function () {
-    $challenge = multiChallenge($this);
+it('filters and ranks the offered rails by Accept-Payment', function () {
+    $only = $this->withHeader('Accept-Payment', 'tempo/charge')->get('/multi');
+    $ranked = $this->withHeader('Accept-Payment', 'tempo/charge, stripe/charge;q=0.2')->get('/multi');
+    $unknown = $this->withHeader('Accept-Payment', 'solana/charge')->get('/multi');
 
-    expect($challenge['accepts'])->toHaveKeys(['stripe', 'tempo'])
-        ->and($challenge['accepts']['stripe']['sig'])->not->toBe($challenge['accepts']['tempo']['sig'])
-        ->and($challenge['accepts']['tempo']['payment_method_types'])->toBe(['stablecoin']);
+    $methods = fn ($r) => array_column(parseChallenges($r->headers->get('WWW-Authenticate')), 'method');
+
+    expect($methods($only))->toBe(['tempo'])
+        ->and($methods($ranked))->toBe(['tempo', 'stripe'])
+        // No match: the header is ignored and the full set returned, per spec.
+        ->and($methods($unknown))->toBe(['stripe', 'tempo']);
 });
 
 it('routes a stripe credential to the stripe verifier', function () {
-    $c = multiChallenge($this);
+    $challenge = getChallenge($this, '/multi', 'stripe');
 
-    $response = payWithProof($this, 'stripe', $c['id'], $c['accepts']['stripe']['sig'], 'spt', 'spt_x');
+    $response = $this->withHeaders([
+        'Authorization' => paymentCredential($challenge, ['spt' => 'spt_x']),
+    ])->get('/multi');
 
     $response->assertOk()->assertSee('MULTI');
+
     expect(FakeVerifier::$calls)->toBe(1)
         ->and(FakeTempoVerifier::$calls)->toBe(0)
-        ->and($response->headers->get('Payment-Receipt'))->toContain('method="stripe"');
+        ->and(decodeReceipt($response->headers->get('Payment-Receipt'))['method'])->toBe('stripe');
 });
 
 it('routes a tempo credential to the tempo verifier', function () {
-    $c = multiChallenge($this);
+    $challenge = getChallenge($this, '/multi', 'tempo');
 
-    $response = payWithProof($this, 'tempo', $c['id'], $c['accepts']['tempo']['sig'], 'proof', '0xabc');
+    $response = $this->withHeaders([
+        'Authorization' => paymentCredential($challenge, ['type' => 'transaction', 'signature' => '0x76abc']),
+    ])->get('/multi');
 
     $response->assertOk()->assertSee('MULTI');
+
     expect(FakeTempoVerifier::$calls)->toBe(1)
         ->and(FakeVerifier::$calls)->toBe(0)
-        ->and($response->headers->get('Payment-Receipt'))
-        ->toContain('method="tempo"')
-        ->toContain('ref="0xtempo_1"')
-        ->not->toContain('paymentIntent=');
+        ->and(decodeReceipt($response->headers->get('Payment-Receipt'))['method'])->toBe('tempo');
 });
 
-it('rejects a method that was not offered', function () {
-    $c = multiChallenge($this);
+it('dispatches by the STORED challenge method, not the credential claim', function () {
+    // Echo the stripe challenge's id but claim method=tempo in the echo: the
+    // stored challenge wins, so the stripe verifier runs, sees no SPT in the
+    // payload, and settlement fails with a fresh 402 — never the tempo rail.
+    $challenge = getChallenge($this, '/multi', 'stripe');
+    $challenge['method'] = 'tempo';
 
-    // Sign-looking but for an un-offered method.
-    payWithProof($this, 'paypal', $c['id'], $c['accepts']['stripe']['sig'], 'proof', 'x')
-        ->assertStatus(402);
-
-    expect(FakeVerifier::$calls)->toBe(0)->and(FakeTempoVerifier::$calls)->toBe(0);
-});
-
-it('rejects a stripe signature presented on a tempo credential (cross-method forgery)', function () {
-    $c = multiChallenge($this);
-
-    // Present method=tempo but with the STRIPE accept's signature.
-    payWithProof($this, 'tempo', $c['id'], $c['accepts']['stripe']['sig'], 'proof', '0xabc')
-        ->assertStatus(402);
+    $this->withHeaders([
+        'Authorization' => paymentCredential($challenge, ['type' => 'transaction', 'signature' => '0x76abc']),
+    ])->get('/multi')->assertStatus(402);
 
     expect(FakeTempoVerifier::$calls)->toBe(0);
 });
 
-it('rejects a tempo signature presented on a stripe credential (cross-method forgery)', function () {
-    $c = multiChallenge($this);
+it('burns only the answered challenge; the sibling stays spendable', function () {
+    $response = $this->get('/multi');
+    $challenges = array_column(parseChallenges($response->headers->get('WWW-Authenticate')), null, 'method');
 
-    payWithProof($this, 'stripe', $c['id'], $c['accepts']['tempo']['sig'], 'spt', 'spt_x')
-        ->assertStatus(402);
+    $this->withHeaders([
+        'Authorization' => paymentCredential($challenges['stripe'], ['spt' => 'spt_x']),
+    ])->get('/multi')->assertOk();
+
+    // The tempo challenge from the SAME 402 was not answered and remains valid.
+    $this->withHeaders([
+        'Authorization' => paymentCredential($challenges['tempo'], ['type' => 'transaction', 'signature' => '0x76abc']),
+    ])->get('/multi')->assertOk();
+
+    expect(FakeVerifier::$calls)->toBe(1)->and(FakeTempoVerifier::$calls)->toBe(1);
+});
+
+it('rejects a credential answering an unknown challenge id', function () {
+    $challenge = getChallenge($this, '/multi', 'stripe');
+    $challenge['id'] = 'never-minted-'.$challenge['id'];
+
+    $this->withHeaders([
+        'Authorization' => paymentCredential($challenge, ['spt' => 'spt_x']),
+    ])->get('/multi')->assertStatus(402);
 
     expect(FakeVerifier::$calls)->toBe(0);
 });

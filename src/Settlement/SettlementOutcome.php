@@ -17,7 +17,7 @@ final class SettlementOutcome
     /**
      * @param  bool  $confirmed  whether the rail reports a finalised settlement for the proof
      * @param  string|null  $settlementRef  canonical reference for the settlement (e.g. tx hash)
-     * @param  int|null  $amountMinor  settled amount in minor units, as read from the rail
+     * @param  int|string|null  $amountMinor  settled amount in minor units, as read from the rail (a string keeps an on-chain amount exact above PHP_INT_MAX)
      * @param  string|null  $currency  settled currency / asset code, as read from the rail
      * @param  string|null  $recipient  the address/account funds settled to, as read from the rail
      * @param  int|null  $confirmations  confirmations observed for the settlement, if known
@@ -26,14 +26,14 @@ final class SettlementOutcome
     public function __construct(
         public readonly bool $confirmed,
         public readonly ?string $settlementRef = null,
-        public readonly ?int $amountMinor = null,
+        public readonly int|string|null $amountMinor = null,
         public readonly ?string $currency = null,
         public readonly ?string $recipient = null,
         public readonly ?int $confirmations = null,
         public readonly ?string $reason = null,
     ) {}
 
-    public static function confirmed(string $settlementRef, int $amountMinor, string $currency, string $recipient, ?int $confirmations = null): self
+    public static function confirmed(string $settlementRef, int|string $amountMinor, string $currency, string $recipient, ?int $confirmations = null): self
     {
         return new self(
             confirmed: true,

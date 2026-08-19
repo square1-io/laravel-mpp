@@ -14,13 +14,11 @@ use Attribute;
  * `grants > 1` issues a prepaid session (one charge, N accesses); `grants = 1`
  * is a once-off per-request charge.
  *
- * Offer several native settlement rails at once with `methods` (ordered,
- * primary first); the first entry is treated as the primary:
+ * Offer several settlement rails at once with `methods` (ordered, primary
+ * first); the 402 carries one Payment challenge per rail and the client
+ * answers exactly one:
  *
- *   #[RequiresPayment(amount: '0.50', methods: ['stripe', 'acme'])]
- *
- * Tempo uses the separate mppx dialect and cannot be co-offered with native
- * rails; use `method: 'tempo'` when a route should emit a Tempo challenge.
+ *   #[RequiresPayment(amount: '0.50', methods: ['stripe', 'tempo'])]
  *
  * Leave `methods` null to use the package default offered set (`mpp.accept`, or
  * `mpp.default_method` when `mpp.accept` is unset). `method` still sets a

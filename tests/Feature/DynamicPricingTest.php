@@ -2,7 +2,7 @@
 
 use Illuminate\Support\Facades\Log;
 use Square1\Mpp\Exceptions\InvalidConfigurationException;
-use Square1\Mpp\Protocol\Tempo\MppxCodec;
+use Square1\Mpp\Support\Base64Url;
 use Square1\Mpp\Tests\Fakes\AllowPrecondition;
 use Square1\Mpp\Tests\Fakes\DenyPrecondition;
 use Square1\Mpp\Tests\Fakes\FakeTempoVerifier;
@@ -20,20 +20,13 @@ beforeEach(function () {
     FakeTempoVerifier::reset();
 });
 
-/** Pull the challenged amount out of a 402's native accepts[] entry. */
-function challengedAmount($response): ?string
-{
-    return $response->json('accepts.0.amount');
-}
-
 /** Pull the minor-unit amount out of an mppx (tempo) 402's request blob. */
 function mppxChallengedAmount($response): ?string
 {
-    preg_match('/request="([^"]+)"/', (string) $response->headers->get('WWW-Authenticate'), $m);
+    $challenge = parseChallenges($response->headers->get('WWW-Authenticate'))[0] ?? [];
+    $request = json_decode((string) Base64Url::decode($challenge['request'] ?? ''), true);
 
-    $request = json_decode((new MppxCodec)->base64UrlDecode($m[1] ?? ''), true);
-
-    return $request['amount'] ?? null;
+    return is_array($request) ? ($request['amount'] ?? null) : null;
 }
 
 // ── Overriding the price ────────────────────────────────────────────────────
@@ -84,11 +77,13 @@ it('overrides currency, grants and scope alongside the amount', function () {
 
     $response = $this->get('/price/tiered')->assertStatus(402);
 
-    expect($response->json('accepts.0'))
-        ->amount->toBe('12.00')
-        ->currency->toBe('EUR')
-        ->grants->toBe(20)
-        ->scope->toBe('price.tiered.pro');
+    $challenge = parseChallenges($response->headers->get('WWW-Authenticate'))[0];
+    $request = json_decode((string) Base64Url::decode($challenge['request']), true);
+
+    expect($request['amount'])->toBe('1200')
+        ->and($request['currency'])->toBe('eur')
+        ->and(challengedOpaque($response, 'grants'))->toBe('20')
+        ->and(challengedOpaque($response, 'scope'))->toBe('price.tiered.pro');
 });
 
 it('does not let a resolver change the offered rail', function () {
@@ -252,7 +247,7 @@ it('settles at the challenged amount even after the resolver changes its answer'
     $response = payWithSpt($this, $challenge, '/price/tiered');
 
     $response->assertOk()->assertSee('TIERED');
-    expect($response->headers->get('Payment-Receipt'))->toContain('amount="2.00"');
+    expect(decodeReceipt($response->headers->get('Payment-Receipt'))['amount'])->toBe('2.00');
 });
 
 it('cannot be turned free retroactively to settle a challenge for nothing', function () {
@@ -272,7 +267,7 @@ it('cannot be turned free retroactively to settle a challenge for nothing', func
     $response = payWithSpt($this, $challenge, '/price/tiered');
 
     $response->assertOk();
-    expect($response->headers->get('Payment-Receipt'))->toContain('amount="2.00"');
+    expect(decodeReceipt($response->headers->get('Payment-Receipt'))['amount'])->toBe('2.00');
 });
 
 it('spends a metered session at the scope the resolver assigned', function () {

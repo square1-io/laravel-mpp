@@ -3,9 +3,9 @@
 namespace Square1\Mpp\Settlement;
 
 use Carbon\CarbonImmutable;
+use Illuminate\Support\Facades\Log;
 use Square1\Mpp\Protocol\Challenge;
 use Square1\Mpp\Protocol\Credential;
-use Square1\Mpp\Support\Money;
 use Stripe\StripeClient;
 use Throwable;
 
@@ -20,9 +20,19 @@ use Throwable;
  * can never double-charge.
  *
  * Verified against the SPT preview API (Stripe-Version 2026-05-27.preview).
+ *
+ * A failure reason travels back to the client in the 402 response, so anything
+ * Stripe hands us — exception messages, PaymentIntent statuses — is logged for
+ * the operator and replaced on the wire by {@see self::PUBLIC_FAILURE}. Raw
+ * gateway detail can name internal accounts, keys or decline internals, and a
+ * reason that varies with it is also an oracle for probing the seller's Stripe
+ * account.
  */
 class StripeVerifier implements Verifier
 {
+    /** The only reason a settlement attempt reports to the client. */
+    private const PUBLIC_FAILURE = 'Stripe settlement failed.';
+
     public function __construct(
         private readonly string $secretKey,
         private readonly string $apiVersion = '2026-05-27.preview',
@@ -32,7 +42,7 @@ class StripeVerifier implements Verifier
 
     public function verify(Credential $credential, Challenge $challenge, array $context = []): SettlementResult
     {
-        if (! $credential->isSpt()) {
+        if ($credential->spt() === null) {
             return SettlementResult::failure('No shared payment token presented.');
         }
 
@@ -40,18 +50,18 @@ class StripeVerifier implements Verifier
             return SettlementResult::failure('Stripe secret key is not configured (set STRIPE_SECRET_KEY).');
         }
 
-        $expectedMinor = Money::toMinorUnits($challenge->amount, $challenge->currency);
+        $expectedMinor = (int) $challenge->amount();
 
-        $metadata = ['mpp_challenge_id' => $challenge->id, 'mpp_scope' => $challenge->scope];
+        $metadata = ['mpp_challenge_id' => $challenge->id, 'mpp_scope' => $challenge->scope()];
         if ($this->networkId !== null && $this->networkId !== '') {
             $metadata['mpp_network_id'] = $this->networkId;
         }
 
         $params = [
             'amount' => $expectedMinor,
-            'currency' => strtolower($challenge->currency),
+            'currency' => $challenge->currency(),
             'payment_method_data' => [
-                'shared_payment_granted_token' => $credential->spt,
+                'shared_payment_granted_token' => $credential->spt(),
             ],
             'confirm' => true,
             'metadata' => $metadata,
@@ -68,18 +78,35 @@ class StripeVerifier implements Verifier
                 'idempotency_key' => $challenge->id,
             ]);
         } catch (Throwable $e) {
-            return SettlementResult::failure('Stripe settlement error: '.$e->getMessage());
+            Log::error('[mpp] Stripe settlement raised '.$e::class.': '.$e->getMessage(), [
+                'challenge_id' => $challenge->id,
+                'scope' => $challenge->scope(),
+                'exception' => $e,
+            ]);
+
+            return SettlementResult::failure(self::PUBLIC_FAILURE);
         }
 
         if (($paymentIntent->status ?? null) !== 'succeeded') {
-            return SettlementResult::failure(
-                'PaymentIntent did not succeed (status: '.($paymentIntent->status ?? 'unknown').').'
-            );
+            Log::warning('[mpp] Stripe PaymentIntent did not succeed.', [
+                'challenge_id' => $challenge->id,
+                'payment_intent' => $paymentIntent->id ?? null,
+                'status' => $paymentIntent->status ?? 'unknown',
+            ]);
+
+            return SettlementResult::failure(self::PUBLIC_FAILURE);
         }
 
         // Never serve unless the settled money matches what we challenged for.
         if ((int) $paymentIntent->amount !== $expectedMinor
-            || strtolower((string) $paymentIntent->currency) !== strtolower($challenge->currency)) {
+            || strtolower((string) $paymentIntent->currency) !== $challenge->currency()) {
+            Log::error('[mpp] Stripe settled an amount or currency the challenge did not ask for.', [
+                'challenge_id' => $challenge->id,
+                'payment_intent' => $paymentIntent->id ?? null,
+                'expected' => $expectedMinor.' '.$challenge->currency(),
+                'settled' => $paymentIntent->amount.' '.strtolower((string) $paymentIntent->currency),
+            ]);
+
             return SettlementResult::failure('Settled amount or currency did not match the challenge.');
         }
 

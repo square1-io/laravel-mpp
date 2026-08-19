@@ -29,7 +29,7 @@ it('applies a global price resolver on every route style', function (string $uri
 
     $response = $this->get($uri)->assertStatus(402);
 
-    expect($response->json('accepts.0.amount'))->toBe('2.00');
+    expect(challengedAmount($response))->toBe('2.00');
 })->with([
     'middleware arguments' => '/price/open',
     'attribute via mpp' => '/attr/explicit',
@@ -100,8 +100,8 @@ it('lets a resolver own the price on a route that states none', function () {
 
     $response = $this->get('/price/resolver-owned')->assertStatus(402);
 
-    expect($response->json('accepts.0.amount'))->toBe('2.00')
-        ->and($response->json('accepts.0.scope'))->toBe('price.owned');
+    expect(challengedAmount($response))->toBe('2.00')
+        ->and(challengedOpaque($response, 'scope'))->toBe('price.owned');
 });
 
 it('waives an unpriced route without ever needing an amount', function () {
@@ -140,7 +140,7 @@ it('lets a global default price a route whose resolver declines', function () {
     config()->set('mpp.defaults.amount', '7.00');
     TieredPricing::$overrides = null;
 
-    expect($this->get('/price/resolver-owned')->json('accepts.0.amount'))->toBe('7.00');
+    expect(challengedAmount($this->get('/price/resolver-owned')))->toBe('7.00');
 });
 
 it('never hands a precondition a null amount on a resolver-owned route', function () {

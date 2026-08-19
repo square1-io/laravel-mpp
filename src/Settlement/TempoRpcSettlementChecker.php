@@ -79,7 +79,7 @@ final class TempoRpcSettlementChecker implements SettlementChecker
 
         return SettlementOutcome::confirmed(
             settlementRef: $hash,
-            amountMinor: (int) $expectedAmount,
+            amountMinor: $expectedAmount,
             currency: $expectedToken,
             recipient: $expectedRecipient,
             confirmations: $depth,

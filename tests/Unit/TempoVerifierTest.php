@@ -1,11 +1,13 @@
 <?php
 
 use Carbon\CarbonImmutable;
-use Square1\Mpp\Protocol\Tempo\MppxCodec;
+use Square1\Mpp\Protocol\Challenge;
+use Square1\Mpp\Protocol\CredentialParser;
 use Square1\Mpp\Protocol\Tempo\ParsedTempoCredential;
 use Square1\Mpp\Protocol\Tempo\TempoChallengeState;
 use Square1\Mpp\Settlement\TempoRpcSettlementChecker;
 use Square1\Mpp\Settlement\TempoVerifier;
+use Square1\Mpp\Support\Base64Url;
 use Square1\Mpp\Tests\Fakes\FakeRpcClient;
 
 /**
@@ -23,10 +25,28 @@ const CAPTURED_CHALLENGE_ID = 'tdCiAaAQPDdNOGahL56A343eGtfHlCVnbY99W_DMbZ8';
 const CAPTURED_TX_HASH = '0xe6f620fd235aafbb18d570fc798bb0a556189025608e99e1d3b21ab49d511544';
 const PATH_USD = '0x20c0000000000000000000000000000000000000';
 const RECIPIENT = '0x0dcd39a3f85aa288c1b2825bc41eb7e9bb2abf70';
+// The exact memo carried by the captured signed transaction. The challenge that
+// minted it advertised this value in methodDetails.memo, and the verifier
+// requires the transfer to echo it exactly.
+const CAPTURED_MEMO = '0xef1ed7120135bfd7eb12e2daed83fd00000000000000000000d661e55c8d44f9';
 
 function capturedCredential(): ParsedTempoCredential
 {
-    return (new MppxCodec)->parseCredential('Payment '.CAPTURED_CREDENTIAL);
+    $c = (new CredentialParser)->parse('Payment '.CAPTURED_CREDENTIAL);
+    $echo = $c->challenge;
+
+    return new ParsedTempoCredential(
+        challengeId: (string) $echo['id'],
+        realm: (string) $echo['realm'],
+        method: (string) $echo['method'],
+        intent: (string) $echo['intent'],
+        expires: $echo['expires'] ?? null,
+        request: (array) json_decode((string) Base64Url::decode($echo['request']), true),
+        payloadType: (string) $c->payload['type'],
+        signature: (string) $c->payload['signature'],
+        source: $c->source,
+        rawRequest: (string) $echo['request'],
+    );
 }
 
 function tempoState(array $overrides = []): TempoChallengeState
@@ -40,6 +60,7 @@ function tempoState(array $overrides = []): TempoChallengeState
         chainId: $overrides['chainId'] ?? 42431,
         expiresAt: $overrides['expiresAt'] ?? CarbonImmutable::now()->addMinutes(5),
         grants: $overrides['grants'] ?? 1,
+        memo: $overrides['memo'] ?? CAPTURED_MEMO,
     );
 }
 
@@ -58,8 +79,7 @@ it('decodes the captured credential and extracts payer + signed transaction', fu
         ->and($credential->realm)->toBe('localhost')
         ->and($credential->isTransaction())->toBeTrue()
         ->and($credential->signature)->toStartWith('0x76')
-        ->and($credential->source)->toBe('did:pkh:eip155:42431:0xcCCD947aa5ef6248FeBd3AAa41c07d8b0e9b3Fe1')
-        ->and((new MppxCodec)->payerFromSource($credential->source))->toBe('0xcccd947aa5ef6248febd3aaa41c07d8b0e9b3fe1');
+        ->and($credential->source)->toBe('did:pkh:eip155:42431:0xcCCD947aa5ef6248FeBd3AAa41c07d8b0e9b3Fe1');
 });
 
 it('settles the captured credential: validates token/amount/recipient + memo, broadcasts, returns the tx hash', function () {
@@ -70,7 +90,7 @@ it('settles the captured credential: validates token/amount/recipient + memo, br
 
     expect($result->succeeded)->toBeTrue()
         ->and($result->settlementRef)->toBe(CAPTURED_TX_HASH)
-        ->and($result->amountMinor)->toBe(10000)
+        ->and($result->amountMinor)->toBe('10000')
         ->and($rpc->broadcasts)->toHaveCount(1);
 
     // It broadcast the EXACT signed bytes the client presented — never re-signs.
@@ -134,22 +154,28 @@ it('fails closed on a wrong token', function () {
     expect($result->succeeded)->toBeFalse()->and($rpc->broadcasts)->toBeEmpty();
 });
 
-it('fails closed when the memo is bound to a different challenge id', function () {
-    // Same economics, but a DIFFERENT challenge id — the memo nonce will not match.
+it('fails closed when the transfer memo does not match the challenge memo', function () {
+    // The transfer carries the captured memo, but the challenge advertised a
+    // different one — a transfer minted for another challenge cannot settle here.
     $rpc = new FakeRpcClient(FakeRpcClient::successReceipt(PATH_USD, RECIPIENT, '10000', CAPTURED_TX_HASH));
-    $result = tempoVerifier($rpc)->verifyTempo(capturedCredential(), tempoState(['id' => 'some-other-challenge-id']));
+    $result = tempoVerifier($rpc)->verifyTempo(
+        capturedCredential(),
+        tempoState(['memo' => '0x'.str_repeat('11', 32)]),
+    );
 
     expect($result->succeeded)->toBeFalse()
-        ->and($result->failureReason)->toContain('not bound to this challenge')
+        ->and($result->failureReason)->toContain('memo does not match')
         ->and($rpc->broadcasts)->toBeEmpty();
 });
 
-it('fails closed when the realm does not match the memo server fingerprint', function () {
+it('fails closed when the challenge advertised no memo', function () {
+    // A challenge with no advertised memo cannot accept any transfer: there is
+    // nothing to bind the on-chain payment to.
     $rpc = new FakeRpcClient(FakeRpcClient::successReceipt(PATH_USD, RECIPIENT, '10000', CAPTURED_TX_HASH));
-    $result = tempoVerifier($rpc)->verifyTempo(capturedCredential(), tempoState(['realm' => 'evil.example.com']));
+    $result = tempoVerifier($rpc)->verifyTempo(capturedCredential(), tempoState(['memo' => '']));
 
     expect($result->succeeded)->toBeFalse()
-        ->and($result->failureReason)->toContain('realm mismatch')
+        ->and($result->failureReason)->toContain('memo does not match')
         ->and($rpc->broadcasts)->toBeEmpty();
 });
 
@@ -251,4 +277,30 @@ it('fails closed when the echoed request is tampered to a lower amount', functio
     expect($result->succeeded)->toBeFalse()
         ->and($result->failureReason)->toContain('does not match')
         ->and($rpc->broadcasts)->toBeEmpty();
+});
+
+it('settles the captured credential through the public Verifier interface', function () {
+    $rpc = new FakeRpcClient(FakeRpcClient::successReceipt(PATH_USD, RECIPIENT, '10000', CAPTURED_TX_HASH));
+    $rpc->forcedHash = CAPTURED_TX_HASH;
+
+    $credential = (new CredentialParser)->parse('Payment '.CAPTURED_CREDENTIAL);
+
+    $challenge = new Challenge(
+        id: CAPTURED_CHALLENGE_ID,
+        realm: 'localhost',
+        method: 'tempo',
+        intent: 'charge',
+        request: [
+            'amount' => '10000',
+            'currency' => PATH_USD,
+            'recipient' => RECIPIENT,
+            'methodDetails' => ['chainId' => 42431, 'memo' => CAPTURED_MEMO],
+        ],
+        expiresAt: CarbonImmutable::now()->addMinutes(5),
+    );
+
+    $result = tempoVerifier($rpc)->verify($credential, $challenge);
+
+    expect($result->succeeded)->toBeTrue()
+        ->and($result->settlementRef)->toBe(CAPTURED_TX_HASH);
 });

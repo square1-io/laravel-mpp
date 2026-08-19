@@ -1,6 +1,7 @@
 /vendor/
 /node_modules/
 composer.phar
+composer.lock
 .phpunit.cache/
 .phpunit.result.cache
 .php-cs-fixer.cache
@@ -8,3 +9,4 @@ composer.phar
 .env
 .stripe-test.env
 /build/
+/docs/validation/

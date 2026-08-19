@@ -6,7 +6,6 @@ use Square1\Mpp\Protocol\Challenge;
 use Square1\Mpp\Protocol\Credential;
 use Square1\Mpp\Settlement\SettlementResult;
 use Square1\Mpp\Settlement\Verifier;
-use Square1\Mpp\Support\Money;
 
 /**
  * Deterministic verifier for feature tests — settles without touching Stripe.
@@ -32,14 +31,20 @@ class FakeVerifier implements Verifier
         self::$calls++;
         self::$lastContext = $context;
 
+        // Mirror the real Stripe rail's payload requirement so routing tests
+        // exercise genuine behaviour: no SPT, no settlement.
+        if ($credential->spt() === null) {
+            return SettlementResult::failure('No SPT presented.');
+        }
+
         if (! self::$succeed) {
             return SettlementResult::failure('Fake verifier declined.');
         }
 
         return SettlementResult::settled(
             settlementRef: 'pi_fake_'.self::$calls,
-            amountMinor: Money::toMinorUnits($challenge->amount, $challenge->currency),
-            currency: $challenge->currency,
+            amountMinor: (int) $challenge->amount(),
+            currency: preg_match('/^[a-z]{3}$/i', $challenge->currency()) ? $challenge->currency() : null,
         );
     }
 }

@@ -6,6 +6,8 @@ use Illuminate\Contracts\Cache\Factory as CacheFactory;
 use Illuminate\Http\Client\Factory;
 use Illuminate\Routing\Router;
 use Illuminate\Support\ServiceProvider;
+use Square1\Mpp\Discovery\DiscoveryDocument;
+use Square1\Mpp\Http\Middleware\EnforceHttps;
 use Square1\Mpp\Http\Middleware\EnforcePaymentAttributes;
 use Square1\Mpp\Http\Middleware\RequirePayment;
 use Square1\Mpp\Metering\SessionStore;
@@ -17,13 +19,11 @@ use Square1\Mpp\Payment\PaymentPipeline;
 use Square1\Mpp\Payment\PreconditionRunner;
 use Square1\Mpp\Payment\PriceResolver;
 use Square1\Mpp\Payment\SpecResolver;
-use Square1\Mpp\Payment\TempoGate;
+use Square1\Mpp\Protocol\ChallengeBinding;
 use Square1\Mpp\Protocol\ChallengeFactory;
 use Square1\Mpp\Protocol\ChallengeStore;
 use Square1\Mpp\Protocol\CredentialParser;
-use Square1\Mpp\Protocol\Tempo\MppxCodec;
-use Square1\Mpp\Protocol\Tempo\TempoChallengeFactory;
-use Square1\Mpp\Protocol\Tempo\TempoChallengeStore;
+use Square1\Mpp\Protocol\SettlementLedger;
 use Square1\Mpp\Settlement\SettlementChecker;
 use Square1\Mpp\Settlement\StripeVerifier;
 use Square1\Mpp\Settlement\Tempo\HttpRpcClient;
@@ -39,14 +39,26 @@ class MppServiceProvider extends ServiceProvider
     {
         $this->mergeConfigFrom(__DIR__.'/../config/mpp.php', 'mpp');
 
-        $this->app->singleton(ChallengeFactory::class, fn ($app) => new ChallengeFactory(
+        $this->app->singleton(ChallengeBinding::class, fn () => new ChallengeBinding(
             secret: ChallengeSecret::resolve(config('mpp.secret'), config('app.key')),
+        ));
+
+        $this->app->singleton(ChallengeFactory::class, fn ($app) => new ChallengeFactory(
+            binding: $app->make(ChallengeBinding::class),
             ttl: (int) config('mpp.challenge_ttl', 300),
         ));
 
+        // Protocol state (challenges, replay ledger) lives on `mpp.cache_store`;
+        // null follows the app's default store. Production multi-node setups must
+        // name a shared atomic store — see the config comment.
         $this->app->singleton(ChallengeStore::class, fn ($app) => new ChallengeStore(
-            cache: $app['cache']->store(),
+            cache: $app['cache']->store(config('mpp.cache_store')),
             ttl: (int) config('mpp.challenge_ttl', 300),
+        ));
+
+        $this->app->singleton(SettlementLedger::class, fn ($app) => new SettlementLedger(
+            cache: $app['cache']->store(config('mpp.cache_store')),
+            ttl: (int) config('mpp.settlement_replay_ttl', 300),
         ));
 
         $this->app->bind(StripeVerifier::class, fn ($app) => new StripeVerifier(
@@ -69,20 +81,7 @@ class MppServiceProvider extends ServiceProvider
 
         $this->app->singleton(SessionStore::class, fn ($app) => $this->makeSessionStore($app));
 
-        // ── Tempo rail (mppx dialect, pure-PHP on-chain settlement) ──────────
-        $this->app->singleton(MppxCodec::class, fn () => new MppxCodec);
-
-        $this->app->singleton(TempoChallengeFactory::class, fn ($app) => new TempoChallengeFactory(
-            codec: $app->make(MppxCodec::class),
-            secret: ChallengeSecret::resolve(config('mpp.secret'), config('app.key')),
-            ttl: (int) config('mpp.challenge_ttl', 300),
-        ));
-
-        $this->app->singleton(TempoChallengeStore::class, fn ($app) => new TempoChallengeStore(
-            cache: $app['cache']->store(),
-            ttl: (int) config('mpp.challenge_ttl', 300),
-        ));
-
+        // ── Tempo rail (pure-PHP on-chain settlement) ────────────────────────
         // The JSON-RPC client the on-chain checker broadcasts through. Holds no
         // key and signs nothing — it relays the client-signed transaction and
         // reads its receipt. Rebind in tests to a fake.
@@ -96,34 +95,26 @@ class MppServiceProvider extends ServiceProvider
             rpc: $app->make(RpcClient::class),
         ));
 
-        // Resolve TempoVerifier with its checker + method config injected for
-        // the mppx Tempo gate.
+        // Resolve TempoVerifier with its checker + method config injected; the
+        // VerifierFactory makes it by class name from `mpp.methods.tempo.verifier`.
         $this->app->bind(TempoVerifier::class, fn ($app) => new TempoVerifier(
             checker: $app->make(SettlementChecker::class),
             methodConfig: (array) config('mpp.methods.tempo', []),
         ));
 
-        $this->app->singleton(TempoGate::class, fn ($app) => new TempoGate(
-            codec: $app->make(MppxCodec::class),
-            factory: $app->make(TempoChallengeFactory::class),
-            challenges: $app->make(TempoChallengeStore::class),
-            verifier: $app->make(TempoVerifier::class),
-            sessions: $app->make(SessionStore::class),
-            cache: $app->make(CacheFactory::class),
-            parser: $app->make(CredentialParser::class),
-            sessionTtl: (int) config('mpp.session_ttl', 3600),
-        ));
-
         $this->app->singleton(PaymentGate::class, fn ($app) => new PaymentGate(
             factory: $app->make(ChallengeFactory::class),
+            binding: $app->make(ChallengeBinding::class),
             parser: $app->make(CredentialParser::class),
             challenges: $app->make(ChallengeStore::class),
             verifiers: $app->make(VerifierFactory::class),
             sessions: $app->make(SessionStore::class),
             cache: $app->make(CacheFactory::class),
-            tempo: $app->make(TempoGate::class),
             configValidator: $app->make(MethodConfigValidator::class),
+            ledger: $app->make(SettlementLedger::class),
             sessionTtl: (int) config('mpp.session_ttl', 3600),
+            settleLockTtl: (int) config('mpp.settle_lock_ttl', 300),
+            replayMaxBytes: (int) config('mpp.replay_max_bytes', 262144),
         ));
 
         // The one path from a guarded route to the gate, shared by both
@@ -148,6 +139,18 @@ class MppServiceProvider extends ServiceProvider
 
         $router = $this->app->make(Router::class);
         $router->aliasMiddleware('mpp', RequirePayment::class);
+
+        // MPP discovery: an advisory OpenAPI document generated from the live
+        // router, so it can never drift from the routes' actual pricing. The
+        // discovery draft requires it at GET /openapi.json specifically, so the
+        // path is fixed; an app serving its own OpenAPI doc disables this and
+        // merges the x-payment-info extension itself.
+        if (config('mpp.discovery.enabled', true)) {
+            $router->get(
+                '/openapi.json',
+                fn () => response()->json($this->app->make(DiscoveryDocument::class)->toArray())
+            )->name('mpp.discovery')->middleware(EnforceHttps::class);
+        }
 
         // Opt-in: auto-enforce #[RequiresPayment] on the configured route groups.
         if (config('mpp.attributes.enabled')) {

@@ -6,7 +6,6 @@ use Square1\Mpp\Protocol\Challenge;
 use Square1\Mpp\Protocol\Credential;
 use Square1\Mpp\Settlement\SettlementResult;
 use Square1\Mpp\Settlement\Verifier;
-use Square1\Mpp\Support\Money;
 
 /**
  * Deterministic Tempo-rail verifier for feature tests — settles a presented
@@ -38,8 +37,8 @@ class FakeTempoVerifier implements Verifier
 
         return SettlementResult::settled(
             settlementRef: '0xtempo_'.self::$calls,
-            amountMinor: Money::toMinorUnits($challenge->amount, $challenge->currency),
-            currency: $challenge->currency,
+            amountMinor: (int) $challenge->amount(),
+            currency: preg_match('/^[a-z]{3}$/i', $challenge->currency()) ? $challenge->currency() : null,
         );
     }
 }

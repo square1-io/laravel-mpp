@@ -3,11 +3,11 @@
 namespace Square1\Mpp\Protocol\Tempo;
 
 /**
- * A parsed mppx-dialect tempo credential: the echoed challenge fields, the
+ * A parsed tempo credential: the echoed challenge fields, the
  * signed-transaction payload, and the payer DID source.
  *
  * The `signature` is the COMPLETE signed Tempo transaction (a `0x76`/`0x78`
- * envelope), not an ECDSA signature — that is mppx's field name for a
+ * envelope), not an ECDSA signature — that is the spec's field name for a
  * `payload.type === 'transaction'` credential. The server decodes it, validates
  * its transfer call against the challenge, then broadcasts it.
  */
