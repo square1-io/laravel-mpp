@@ -389,7 +389,7 @@ WWW-Authenticate: Payment id="...", realm="...", method="stripe", intent="charge
 WWW-Authenticate: Payment id="...", realm="...", method="tempo", intent="charge", request="...", expires="..."
 ```
 
-How a client sees this depends on its HTTP library, and the two behaviours differ in a way worth knowing:
+How a client sees this depends on its HTTP library:
 
 - **`fetch`-based clients (Node, browsers) recombine it.** Per the WHATWG Headers spec, `headers.get('www-authenticate')` returns the repeated lines joined with `, ` - one string carrying every challenge. Agents built on `fetch`, `mppx` included, therefore see byte-identical input whether the server sends one joined line or several.
 - **Server-side bags usually return only the first.** Laravel/Symfony's `$response->headers->get()` gives you one line. Use `->all('WWW-Authenticate')` when you need every challenge, or a multi-rail response will look single-rail.
@@ -425,13 +425,7 @@ The server filters and ranks its offered challenges by the header. q-values, wil
 >
 > So on `methods=stripe|tempo` a crypto-only agent is handed the card challenge and dies, while `methods=tempo|stripe` pays cleanly. Nothing is wrong with the `402` in either case - the difference is entirely which rail leads the set.
 >
-> Two things follow. List the rail your typical caller can pay first, and treat "both rails from one URL" as working properly only for callers that send `Accept-Payment`; for callers that do not, you are really offering the first rail with the rest as ignored detail.
->
-> The order you write is the order you get, in a route's `methods=` and in `MPP_ACCEPT` alike. Still worth confirming what you actually emit rather than assuming:
->
-> ```bash
-> curl -sD - -o /dev/null https://your-host/resource | grep -i '^www-authenticate' | grep -o 'method="[a-z]*"'
-> ```
+> Two things follow. List the rail your typical caller can pay first, and treat "both rails from one URL" as working properly only for callers that send `Accept-Payment`; for callers that do not, you are really offering the first rail with the rest as ignored detail. The order you write is the order you get.
 
 ### Discovery
 
