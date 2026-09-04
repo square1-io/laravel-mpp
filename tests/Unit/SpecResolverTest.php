@@ -205,6 +205,36 @@ it('reads the offered set from config(mpp.accept)', function () {
     expect($spec->method)->toBe('stripe')->and($spec->offeredMethods)->toBe(['stripe', 'tempo']);
 });
 
+it('keeps the order config(mpp.accept) was written in, whatever default_method is', function () {
+    // The rail that leads decides what a non-negotiating client answers, so an
+    // accept set written tempo-first has to be offered tempo-first. Until 2.x
+    // `default_method` was hoisted here, silently ignoring this order.
+    config()->set('mpp.default_method', 'stripe');
+    config()->set('mpp.accept', ['tempo', 'stripe']);
+
+    $spec = $this->resolver->fromMiddlewareArgs(['0.50', 'USD'], Request::create('/clip'));
+
+    expect($spec->offeredMethods)->toBe(['tempo', 'stripe'])
+        ->and($spec->method)->toBe('tempo');
+});
+
+it('still uses default_method for a route that names no rails', function () {
+    config()->set('mpp.default_method', 'tempo');
+    config()->set('mpp.accept', null);
+
+    $spec = $this->resolver->fromMiddlewareArgs(['0.50', 'USD'], Request::create('/clip'));
+
+    expect($spec->offeredMethods)->toBe(['tempo']);
+});
+
+it('lets an explicit method= still win the primary slot inside an accept set', function () {
+    config()->set('mpp.accept', ['tempo', 'stripe']);
+
+    $spec = $this->resolver->fromMiddlewareArgs(['0.50', 'USD', 'method=stripe'], Request::create('/clip'));
+
+    expect($spec->method)->toBe('stripe')->and($spec->offeredMethods)->toBe(['stripe']);
+});
+
 it('parses a per-route methods= override and keeps the primary first', function () {
     $spec = $this->resolver->fromMiddlewareArgs(
         ['0.50', 'USD', 'methods=tempo|stripe', 'method=stripe'],

@@ -16,7 +16,7 @@ beforeEach(function () {
 it('offers one challenge per rail in a single 402', function () {
     $response = $this->get('/multi')->assertStatus(402);
 
-    $challenges = parseChallenges($response->headers->get('WWW-Authenticate'));
+    $challenges = challengesFrom($response);
     $byMethod = array_column($challenges, null, 'method');
 
     expect($challenges)->toHaveCount(2)
@@ -26,12 +26,32 @@ it('offers one challenge per rail in a single 402', function () {
         ->and($byMethod['tempo']['intent'])->toBe('charge');
 });
 
+it('puts each challenge on its own WWW-Authenticate field line', function () {
+    $response = $this->get('/multi')->assertStatus(402);
+
+    // Repeated field lines, not one comma-joined value: the form the spec
+    // illustrates (draft-httpauth-payment-00 B.2) and the unambiguous one to
+    // parse. Asserted on the response because `headers->get()` returns only the
+    // first line, so a regression here is invisible to any test using it.
+    $lines = $response->headers->all('WWW-Authenticate');
+
+    expect($lines)->toHaveCount(2)
+        ->and(parseChallenges($lines[0]))->toHaveCount(1)
+        ->and(parseChallenges($lines[1]))->toHaveCount(1);
+});
+
+it('collapses to a single field line when one rail is offered', function () {
+    $response = $this->get('/clip')->assertStatus(402);
+
+    expect($response->headers->all('WWW-Authenticate'))->toHaveCount(1);
+});
+
 it('filters and ranks the offered rails by Accept-Payment', function () {
     $only = $this->withHeader('Accept-Payment', 'tempo/charge')->get('/multi');
     $ranked = $this->withHeader('Accept-Payment', 'tempo/charge, stripe/charge;q=0.2')->get('/multi');
     $unknown = $this->withHeader('Accept-Payment', 'solana/charge')->get('/multi');
 
-    $methods = fn ($r) => array_column(parseChallenges($r->headers->get('WWW-Authenticate')), 'method');
+    $methods = fn ($r) => array_column(challengesFrom($r), 'method');
 
     expect($methods($only))->toBe(['tempo'])
         ->and($methods($ranked))->toBe(['tempo', 'stripe'])
@@ -83,7 +103,7 @@ it('dispatches by the STORED challenge method, not the credential claim', functi
 
 it('burns only the answered challenge; the sibling stays spendable', function () {
     $response = $this->get('/multi');
-    $challenges = array_column(parseChallenges($response->headers->get('WWW-Authenticate')), null, 'method');
+    $challenges = array_column(challengesFrom($response), null, 'method');
 
     $this->withHeaders([
         'Authorization' => paymentCredential($challenges['stripe'], ['spt' => 'spt_x']),

@@ -17,7 +17,7 @@ it('returns a well-formed spec 402 for an unpaid request', function () {
     // The body carries no economic terms — those live in the challenge only.
     expect($response->json('accepts'))->toBeNull();
 
-    $challenge = parseChallenges($response->headers->get('WWW-Authenticate'))[0];
+    $challenge = challengesFrom($response)[0];
 
     expect($challenge['method'])->toBe('stripe')
         ->and($challenge['intent'])->toBe('charge')
@@ -32,7 +32,7 @@ it('returns a well-formed spec 402 for an unpaid request', function () {
 
 it('makes the challenge id the verifiable binding and echoes it in the body', function () {
     $response = $this->get('/clip');
-    $challenge = parseChallenges($response->headers->get('WWW-Authenticate'))[0];
+    $challenge = challengesFrom($response)[0];
 
     expect($response->json('challengeId'))->toBe($challenge['id'])
         ->and(strlen($challenge['id']))->toBeGreaterThanOrEqual(43); // 32-byte HMAC, base64url
@@ -40,7 +40,7 @@ it('makes the challenge id the verifiable binding and echoes it in the body', fu
 
 it('advertises the metered bundle in bound opaque data', function () {
     $response = $this->get('/report');
-    $challenge = parseChallenges($response->headers->get('WWW-Authenticate'))[0];
+    $challenge = challengesFrom($response)[0];
 
     $request = json_decode((string) Base64Url::decode($challenge['request']), true);
     $opaque = json_decode((string) Base64Url::decode($challenge['opaque'] ?? ''), true);

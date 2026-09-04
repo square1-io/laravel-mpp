@@ -473,7 +473,7 @@ class PaymentGate
         $document = $this->factory->problemDocument($challenges, $detail, $type);
 
         return $this->problem($document, (int) $document['status'])
-            ->header('WWW-Authenticate', $this->factory->wwwAuthenticate($challenges));
+            ->header('WWW-Authenticate', $this->factory->wwwAuthenticateLines($challenges));
     }
 
     /**

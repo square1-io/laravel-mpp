@@ -148,8 +148,15 @@ return [
     |--------------------------------------------------------------------------
     | The ordered set of rails offered on a 402 when a route does not name its
     | own (`method=` / `methods=`). One WWW-Authenticate Payment challenge is
-    | minted per method; clients pick via Accept-Payment. Unset, only
-    | `default_method` is offered — byte-identical to single-rail behaviour.
+    | minted per field line, one line per method; clients pick via
+    | Accept-Payment. Unset, only `default_method` is offered — byte-identical
+    | to single-rail behaviour.
+    |
+    | ORDER MATTERS. The first rail listed leads the challenge set, and a client
+    | that sends no Accept-Payment answers whichever leads — some take it
+    | without checking they can pay it. List the rail your typical caller can
+    | pay first. `default_method` chooses the rail for routes that name none; it
+    | does not reorder this list.
     */
     'accept' => env('MPP_ACCEPT') ? explode('|', (string) env('MPP_ACCEPT')) : null,
 

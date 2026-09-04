@@ -11,7 +11,7 @@ use Square1\Mpp\Protocol\Requests\TempoRequestBuilder;
 /**
  * Mints spec-format challenges — one Challenge per offered method, each
  * self-authenticating via the seven-slot HMAC binding (its id) — and renders
- * the combined `WWW-Authenticate` header and problem+json body for a 402.
+ * the `WWW-Authenticate` field lines and problem+json body for a 402.
  */
 class ChallengeFactory
 {
@@ -96,16 +96,23 @@ class ChallengeFactory
     }
 
     /**
-     * The combined WWW-Authenticate value: each challenge is one `Payment …`
-     * entry, comma-joined per RFC 9110 list combining (byte-identical to what
-     * intermediaries produce from repeated header lines, and what the
-     * reference implementation emits).
+     * One WWW-Authenticate field line per challenge, in offered order.
+     *
+     * Repeated field lines rather than a single comma-joined value: that is the
+     * form the spec illustrates (draft-httpauth-payment-00, B.2), and it is the
+     * unambiguous one to parse. Both are legal HTTP — WWW-Authenticate is a list
+     * field, so RFC 9110 allows either — but a joined value puts the commas
+     * separating challenges in the same position as the commas separating each
+     * challenge's own auth-params, leaving a parser to infer the boundaries.
+     *
+     * A single-challenge 402 emits exactly one line, unchanged from before.
      *
      * @param  non-empty-list<Challenge>  $challenges
+     * @return non-empty-list<string>
      */
-    public function wwwAuthenticate(array $challenges): string
+    public function wwwAuthenticateLines(array $challenges): array
     {
-        return implode(', ', array_map(fn (Challenge $c) => $c->headerValue(), $challenges));
+        return array_values(array_map(fn (Challenge $c) => $c->headerValue(), $challenges));
     }
 
     /**

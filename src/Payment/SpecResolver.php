@@ -100,7 +100,7 @@ class SpecResolver
         // Normalise "stated no price" to null; everything downstream tests for it.
         $amount = ($amount === null || $amount === '') ? null : (string) $amount;
 
-        $offered = $this->resolveOfferedMethods($method, $methods);
+        $offered = OfferedMethods::resolve($method, $methods);
         $primary = $offered[0];
 
         return new PaymentSpec(
@@ -113,75 +113,6 @@ class SpecResolver
             preconditions: $preconditions,
             pricing: $pricing,
         );
-    }
-
-    /**
-     * Resolve the ordered set of offered methods, primary first.
-     *
-     * Precedence for the SET:
-     *   1. an explicit per-route `$methods` list (middleware `methods=…` or the
-     *      attribute's `methods:` param);
-     *   2. an explicit single `$method` (middleware `method=…` or the
-     *      attribute's `method:` param);
-     *   3. otherwise the configured default offered set: `config('mpp.accept')`
-     *      if present;
-     *   4. otherwise just `config('mpp.default_method')`.
-     *
-     * Precedence for the PRIMARY (hoisted to the front of the set):
-     *   1. the explicit single `$method` if given;
-     *   2. otherwise, when the author gave an explicit ordered `$methods` list,
-     *      its FIRST entry — the list is documented as "ordered, primary first",
-     *      so the author's order wins over the configured default;
-     *   3. otherwise `config('mpp.default_method')` if it is in the set (so a
-     *      `config('mpp.accept')` set still defers to the configured default),
-     *      else the set's first entry.
-     *
-     * A single-method result is byte-identical to the pre-multi-rail behaviour.
-     *
-     * @param  list<string>|null  $methods
-     * @return list<string> non-empty, ordered, primary first, de-duplicated
-     */
-    private function resolveOfferedMethods(?string $method, ?array $methods): array
-    {
-        $default = config('mpp.default_method', 'stripe');
-        $explicitList = is_array($methods) && $methods !== [];
-
-        if ($explicitList) {
-            $offered = $methods;
-        } elseif ($method !== null && $method !== '') {
-            $offered = [$method];
-        } else {
-            $accept = config('mpp.accept');
-            $offered = is_array($accept) && $accept !== [] ? $accept : [$default];
-        }
-
-        if ($offered === []) {
-            $offered = [$default];
-        }
-
-        // De-duplicate while preserving order.
-        $offered = array_values(array_unique(array_map('strval', $offered)));
-
-        // Choose the primary and hoist it to the front. An explicit `methods=`
-        // list is ordered by the author, so its first entry is the primary; only
-        // when the set comes from config (`accept`/`default_method`) does the
-        // configured `default_method` win.
-        if ($method !== null && $method !== '') {
-            $primary = $method;
-        } elseif ($explicitList) {
-            $primary = $offered[0];
-        } else {
-            $primary = in_array($default, $offered, true) ? $default : $offered[0];
-        }
-
-        if (! in_array($primary, $offered, true)) {
-            array_unshift($offered, $primary);
-        } else {
-            $offered = array_values(array_filter($offered, fn ($m) => $m !== $primary));
-            array_unshift($offered, $primary);
-        }
-
-        return $offered;
     }
 
     /**

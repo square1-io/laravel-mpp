@@ -139,16 +139,29 @@ it('honours Accept-Payment ranking and exclusion when minting', function () {
         ->and(array_map(fn ($c) => $c->method, $filtered))->toBe(['tempo']);
 });
 
-it('comma-combines multiple challenges into one header value', function () {
+it('emits one header line per challenge, in offered order', function () {
     $challenges = $this->factory->mintAll(specFor(['stripe', 'tempo']), 'api.test', AcceptPayment::parse(null));
-    $header = $this->factory->wwwAuthenticate($challenges);
+    $lines = $this->factory->wwwAuthenticateLines($challenges);
 
-    $parsed = parseChallenges($header);
+    expect($lines)->toHaveCount(2);
 
-    expect($parsed)->toHaveCount(2)
-        ->and($parsed[0]['method'])->toBe('stripe')
-        ->and($parsed[1]['method'])->toBe('tempo')
-        ->and($parsed[0]['id'])->toBe($challenges[0]->id);
+    // Each line is a complete, self-contained challenge: no line depends on
+    // another to be parsed, which is the point of not comma-joining them.
+    foreach ($lines as $i => $line) {
+        $parsed = parseChallenges($line);
+
+        expect($parsed)->toHaveCount(1)
+            ->and($parsed[0]['id'])->toBe($challenges[$i]->id);
+    }
+
+    expect(parseChallenges($lines[0])[0]['method'])->toBe('stripe')
+        ->and(parseChallenges($lines[1])[0]['method'])->toBe('tempo');
+});
+
+it('emits a single header line for a single-rail challenge', function () {
+    $challenges = $this->factory->mintAll(specFor(['stripe']), 'api.test', AcceptPayment::parse(null));
+
+    expect($this->factory->wwwAuthenticateLines($challenges))->toHaveCount(1);
 });
 
 it('honours the ttl in expires', function () {

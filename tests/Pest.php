@@ -11,6 +11,27 @@ uses(TestCase::class)->in('Feature', 'Unit', 'Integration');
 uses(AttributesEnabledTestCase::class)->in('Provider');
 
 /**
+ * Every `Payment …` challenge a 402 offers, across ALL WWW-Authenticate field
+ * lines. The gate emits one line per rail, and `headers->get()` returns only the
+ * first of a repeated field, so tests must collect them or they silently see a
+ * single-rail view of a multi-rail response.
+ *
+ * @return list<array<string, string>>
+ */
+function challengesFrom($response): array
+{
+    $challenges = [];
+
+    foreach ($response->headers->all('WWW-Authenticate') as $line) {
+        foreach (parseChallenges($line) as $challenge) {
+            $challenges[] = $challenge;
+        }
+    }
+
+    return $challenges;
+}
+
+/**
  * Parse a (possibly comma-combined) `WWW-Authenticate` value into one param
  * map per `Payment …` challenge entry.
  *
@@ -46,7 +67,7 @@ function getChallenge(TestCase $test, string $uri, ?string $method = null): arra
 {
     $response = $test->get($uri);
 
-    foreach (parseChallenges($response->headers->get('WWW-Authenticate')) as $challenge) {
+    foreach (challengesFrom($response) as $challenge) {
         if ($method === null || ($challenge['method'] ?? null) === $method) {
             return $challenge;
         }
@@ -115,7 +136,7 @@ function decodeReceipt(?string $header): array
  */
 function challengedAmount(TestResponse $response): ?string
 {
-    $challenges = parseChallenges($response->headers->get('WWW-Authenticate'));
+    $challenges = challengesFrom($response);
 
     if ($challenges === []) {
         return null;
@@ -135,7 +156,7 @@ function challengedAmount(TestResponse $response): ?string
  */
 function challengedOpaque(TestResponse $response, string $key): mixed
 {
-    $challenges = parseChallenges($response->headers->get('WWW-Authenticate'));
+    $challenges = challengesFrom($response);
     $opaque = json_decode((string) Base64Url::decode($challenges[0]['opaque'] ?? ''), true);
 
     return is_array($opaque) ? ($opaque[$key] ?? null) : null;

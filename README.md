@@ -385,10 +385,14 @@ Per-route `methods=` (or the attribute's `methods:`) overrides the config set. A
 The `402` then carries two challenges:
 
 ```http
-WWW-Authenticate: Payment id="...", realm="...", method="stripe", intent="charge",
-    request="...", expires="...", Payment id="...", realm="...", method="tempo",
-    intent="charge", request="...", expires="..."
+WWW-Authenticate: Payment id="...", realm="...", method="stripe", intent="charge", request="...", expires="..."
+WWW-Authenticate: Payment id="...", realm="...", method="tempo", intent="charge", request="...", expires="..."
 ```
+
+How a client sees this depends on its HTTP library:
+
+- **`fetch`-based clients (Node, browsers) recombine it.** Per the WHATWG Headers spec, `headers.get('www-authenticate')` returns the repeated lines joined with `, ` - one string carrying every challenge. Agents built on `fetch`, `mppx` included, therefore see byte-identical input whether the server sends one joined line or several.
+- **Server-side bags usually return only the first.** Laravel/Symfony's `$response->headers->get()` gives you one line. Use `->all('WWW-Authenticate')` when you need every challenge, or a multi-rail response will look single-rail.
 
 Each challenge is bound and spendable on its own. Settling the Stripe challenge burns only that challenge. Dispatch on the paid retry uses the stored challenge's method, so a credential cannot claim its way onto a different rail.
 
@@ -409,6 +413,19 @@ npx mppx https://your-host/resource \
 ```
 
 The server filters and ranks its offered challenges by the header. q-values, wildcards (`tempo/*`), and `q=0` exclusions all work as in `Accept`. A caller that sends nothing gets the full offered set in your configured order. A header that matches nothing is ignored per spec, so a caller can never obtain a rail you did not offer.
+
+> **Order the rails your callers can actually pay first.**
+>
+> The spec asks clients to pick a challenge by capability - "clients SHOULD select one based on their capabilities and user preferences" - but not every client does. `npx mppx` (0.9.2) takes the first challenge in the set without checking whether it can pay it, and fails outright if it cannot:
+>
+> ```
+> Error (REQUEST_FAILED): Request failed: Invalid CLI options
+> (paymentMethod: Invalid input: expected string, received undefined)
+> ```
+>
+> So on `methods=stripe|tempo` a crypto-only agent is handed the card challenge and dies, while `methods=tempo|stripe` pays cleanly. Nothing is wrong with the `402` in either case - the difference is entirely which rail leads the set.
+>
+> Two things follow. List the rail your typical caller can pay first, and treat "both rails from one URL" as working properly only for callers that send `Accept-Payment`; for callers that do not, you are really offering the first rail with the rest as ignored detail. The order you write is the order you get.
 
 ### Discovery
 
@@ -501,7 +518,9 @@ Automatic enforcement is disabled by default. It runs on the configured route gr
 
 `scope` is a label you choose for the priced resource. Metered sessions are locked to their scope. If you omit it, the package derives one from the route URI.
 
-When you list several methods, the first one is the primary. It leads the challenge set, before any Accept-Payment reordering by the caller. The body's `challengeId` names it.
+When you list several methods, the first one is the primary. It leads the challenge set, before any `Accept-Payment` reordering by the caller. The body's `challengeId` names it.
+
+That holds wherever the list is written - a route's `methods=`, the attribute's `methods:`, or `MPP_ACCEPT`. `MPP_DEFAULT_METHOD` chooses the rail for routes that name none; it does not reorder a list that does. A single `method=` is the one thing that overrides the order, taking the primary slot for that route.
 
 ### Defaults
 

@@ -23,7 +23,7 @@ beforeEach(function () {
 /** Pull the minor-unit amount out of an mppx (tempo) 402's request blob. */
 function mppxChallengedAmount($response): ?string
 {
-    $challenge = parseChallenges($response->headers->get('WWW-Authenticate'))[0] ?? [];
+    $challenge = challengesFrom($response)[0] ?? [];
     $request = json_decode((string) Base64Url::decode($challenge['request'] ?? ''), true);
 
     return is_array($request) ? ($request['amount'] ?? null) : null;
@@ -77,7 +77,7 @@ it('overrides currency, grants and scope alongside the amount', function () {
 
     $response = $this->get('/price/tiered')->assertStatus(402);
 
-    $challenge = parseChallenges($response->headers->get('WWW-Authenticate'))[0];
+    $challenge = challengesFrom($response)[0];
     $request = json_decode((string) Base64Url::decode($challenge['request']), true);
 
     expect($request['amount'])->toBe('1200')
