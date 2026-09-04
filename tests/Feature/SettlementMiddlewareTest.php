@@ -14,7 +14,7 @@ it('settles a paid retry and returns 200 with a receipt', function () {
 
     expect($receipt['status'])->toBe('success')
         ->and($receipt['reference'])->toBe('pi_fake_1')
-        ->and($receipt['amount'])->toBe('0.50');
+        ->and($receipt)->not->toHaveKeys(['amount', 'currency']);
     expect(FakeVerifier::$calls)->toBe(1);
 });
 

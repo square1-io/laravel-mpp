@@ -231,14 +231,11 @@ The response should be `200 OK` and include a `Payment-Receipt` header. The head
   "status": "success",
   "method": "stripe",
   "reference": "pi_...",
-  "timestamp": "2026-08-18T15:01:12Z",
-  "challengeId": "...",
-  "amount": "1.00",
-  "currency": "USD"
+  "timestamp": "2026-08-18T15:01:12Z"
 }
 ```
 
-The `reference` value is the Stripe PaymentIntent id. You rarely build this by hand. `npx mppx validate https://your-host --endpoint GET:/resource --yes` runs the whole loop for you.
+The `reference` value is the Stripe PaymentIntent id. The receipt returns: `status`, `method`, `timestamp`, and `reference`.q You rarely build this by hand. `npx mppx validate https://your-host --endpoint GET:/resource --yes` runs the whole loop for you.
 
 Cards have minimum charge amounts, often around \$0.50 or EUR 0.50. Price card-backed routes above the minimum, or use a metered bundle where the single charge clears it.
 
@@ -346,10 +343,7 @@ The successful response includes a `Payment-Receipt` header. The header is base6
   "status": "success",
   "method": "tempo",
   "reference": "0x...",
-  "timestamp": "...",
-  "challengeId": "...",
-  "amount": "10000",
-  "currency": "0x20c0000000000000000000000000000000000000"
+  "timestamp": "..."
 }
 ```
 
@@ -570,7 +564,7 @@ The paid request spends the first credit and returns a `Payment-Session` header:
 
 ```http
 HTTP/1.1 200 OK
-Payment-Receipt: <base64url JSON: {"status":"success","method":"stripe","reference":"pi_...","amount":"5.00","currency":"USD",...}>
+Payment-Receipt: <base64url JSON: {"status":"success","method":"stripe","reference":"pi_...","timestamp":"..."}>
 Payment-Session: id="sess_...", remaining="9", scope="report.basic", expiresAt="..."
 ```
 
@@ -782,7 +776,7 @@ A resolver decides the price of a challenge, not of a settlement. The amount is 
 ```
 402  →  amount="2.00"   (caller was on the pro tier)
         ... their subscription lapses ...
-retry →  settles at 2.00, receipt says 2.00
+retry →  settles at 2.00
 ```
 
 The same holds in the other direction: a resolver that turns `free` after issuing a `402` cannot burn or settle that challenge, and a resolver that raises the price cannot charge an outstanding quote more than it promised. Only new challenges get the new price.
@@ -1076,7 +1070,7 @@ Rail payloads differ. Stripe presents `{"spt": "..."}`. Tempo presents `{"type":
 Successful response:
 
 ```http
-Payment-Receipt: <base64url of {"status": "success", "method": "...", "reference": "...", "timestamp": "...", ...}>
+Payment-Receipt: <base64url of {"status": "success", "method": "...", "reference": "...", "timestamp": "..."}>
 ```
 
 Metered follow-up (a package extension, a prepaid session spend rather than a payment):

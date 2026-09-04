@@ -19,11 +19,15 @@ class FakeVerifier implements Verifier
     /** @var array<string, mixed> */
     public static array $lastContext = [];
 
+    /** Minor-unit amount of the challenge most recently settled, as the rail would charge it. */
+    public static ?string $lastSettledAmount = null;
+
     public static function reset(): void
     {
         self::$succeed = true;
         self::$calls = 0;
         self::$lastContext = [];
+        self::$lastSettledAmount = null;
     }
 
     public function verify(Credential $credential, Challenge $challenge, array $context = []): SettlementResult
@@ -40,6 +44,8 @@ class FakeVerifier implements Verifier
         if (! self::$succeed) {
             return SettlementResult::failure('Fake verifier declined.');
         }
+
+        self::$lastSettledAmount = $challenge->amount();
 
         return SettlementResult::settled(
             settlementRef: 'pi_fake_'.self::$calls,
