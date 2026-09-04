@@ -90,7 +90,7 @@ it('does not replay a settled shared-scope receipt on a different route', functi
 it('rejects a paid retry whose body differs from the challenged body', function () {
     $challenge402 = $this->call('POST', '/body', [], [], [], ['CONTENT_TYPE' => 'application/json'], '{"v":"a"}');
     $challenge402->assertStatus(402);
-    $challenge = parseChallenges($challenge402->headers->get('WWW-Authenticate'))[0];
+    $challenge = challengesFrom($challenge402)[0];
 
     $credential = paymentCredential($challenge, ['spt' => 'spt_test']);
     $pay = fn (string $json) => $this->call(
@@ -173,7 +173,7 @@ it('does not replay a settled response for a different credential', function () 
 
 it('does not replay a settled response for a changed body', function () {
     $get = $this->call('POST', '/body', [], [], [], ['CONTENT_TYPE' => 'application/json'], '{"v":"a"}');
-    $challenge = parseChallenges($get->headers->get('WWW-Authenticate'))[0];
+    $challenge = challengesFrom($get)[0];
     $credential = paymentCredential($challenge, ['spt' => 'spt_test']);
     $pay = fn (string $json) => $this->call(
         'POST', '/body', [], [], [],

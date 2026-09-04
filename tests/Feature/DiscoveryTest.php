@@ -36,11 +36,30 @@ it('orders offers primary-first from the configured accept set', function () {
 
     $offers = $this->get('/openapi.json')->json('paths./clip.get.x-payment-info.offers');
 
-    // SpecResolver's rule: a set that came from config defers to
-    // `default_method` (stripe here) for the primary slot, so the document and
-    // the live 402 cannot disagree on which rail a client is offered first.
-    expect(array_column($offers, 'method'))->toBe(['stripe', 'tempo']);
+    // The set's own order leads, whatever `default_method` is (stripe here).
+    // `default_method` chooses the rail for routes that name none; it does not
+    // reorder a set that does.
+    expect(array_column($offers, 'method'))->toBe(['tempo', 'stripe']);
 });
+
+it('advertises the same rail order the live 402 mints', function (array $accept) {
+    config()->set('mpp.accept', $accept);
+
+    $advertised = array_column(
+        $this->get('/openapi.json')->json('paths./clip.get.x-payment-info.offers'),
+        'method'
+    );
+    $minted = array_column(challengesFrom($this->get('/clip')->assertStatus(402)), 'method');
+
+    // Discovery and the gate read the offered set from one place. When they had
+    // an implementation each, a change to one silently desynced the order a
+    // client is advertised from the order it is actually offered.
+    expect($advertised)->toBe($accept)
+        ->and($minted)->toBe($advertised);
+})->with([
+    'tempo leads' => [['tempo', 'stripe']],
+    'stripe leads' => [['stripe', 'tempo']],
+]);
 
 it('advertises a resolver-priced route with an explicit null amount', function () {
     // `mpp:scope=price.owned,pricing=tiered` states no amount at all: only a

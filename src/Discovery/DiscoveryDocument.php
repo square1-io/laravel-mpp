@@ -7,6 +7,7 @@ use Illuminate\Routing\Router;
 use Illuminate\Support\Facades\Log;
 use ReflectionClass;
 use Square1\Mpp\Attributes\RequiresPayment;
+use Square1\Mpp\Payment\OfferedMethods;
 use Square1\Mpp\Payment\PaymentSpec;
 use Square1\Mpp\Protocol\ChallengeFactory;
 
@@ -256,42 +257,8 @@ class DiscoveryDocument
             // resolvers, at request time.
             ($amount === null || $amount === '') ? null : (string) $amount,
             strtoupper($currency ?: (string) (config('mpp.defaults.currency') ?: 'USD')),
-            $this->offeredMethods($method, $methods),
+            OfferedMethods::resolve($method, $methods),
         ];
-    }
-
-    /**
-     * The ordered offered set, primary first — mirroring
-     * SpecResolver::resolveOfferedMethods(): an explicit per-route list keeps
-     * the author's order, an explicit single method wins the primary slot, and
-     * a set that came from config still defers to `mpp.default_method`.
-     *
-     * @param  list<string>|null  $methods
-     * @return non-empty-list<string>
-     */
-    private function offeredMethods(?string $method, ?array $methods): array
-    {
-        $default = (string) config('mpp.default_method', 'stripe');
-        $explicitList = is_array($methods) && $methods !== [];
-
-        if ($explicitList) {
-            $offered = $methods;
-        } elseif ($method !== null && $method !== '') {
-            $offered = [$method];
-        } else {
-            $accept = config('mpp.accept');
-            $offered = is_array($accept) && $accept !== [] ? $accept : [$default];
-        }
-
-        $offered = array_values(array_unique(array_map('strval', $offered)));
-
-        $primary = match (true) {
-            $method !== null && $method !== '' => $method,
-            $explicitList => $offered[0],
-            default => in_array($default, $offered, true) ? $default : $offered[0],
-        };
-
-        return [$primary, ...array_values(array_filter($offered, fn (string $m) => $m !== $primary))];
     }
 
     /**

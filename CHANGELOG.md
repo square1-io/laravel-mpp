@@ -4,7 +4,22 @@ All notable changes to `laravel-mpp` are documented here.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html). The public API is the config file, the middleware argument syntax, the `#[RequiresPayment]` attribute, the `PaymentSpec` your checks and resolvers receive, the `Verifier` / `SettlementChecker` interfaces, and `RequirePayment::handle()`. Service constructors resolved from the container are internal and may change in a minor release.
 
-## [2.0.0] - unreleased
+## [2.1.0]
+
+### Changed
+
+- A 402 offering several rails now puts each `Payment` challenge on its own `WWW-Authenticate` field line, instead of comma-joining them into one. While comma-separate fields in one header is legal HTTP, it leaves a parser to infer the boundaries. Separate headers matches more closely the spec (`draft-httpauth-payment-00`, B.2). This is a conformance change rather than a bug fix - a single-rail 402 is unaffected.
+- Integrators reading the header should note that a plain `get()` returns only the first value of a repeated field. Collect them all (`$response->headers->all('WWW-Authenticate')`), or a multi-rail response looks single-rail.
+- `ChallengeFactory::wwwAuthenticate()` is renamed to `wwwAuthenticateLines()` and returns `list<string>` rather than a joined string. Internal protocol machinery, not part of the documented public API, and renamed rather than re-typed so any external caller fails loudly instead of silently.
+
+- `mpp.accept` (`MPP_ACCEPT`) now keeps the order it was written in. Previously `default_method` was hoisted to the front of it, so `MPP_ACCEPT="tempo|stripe"` still led with Stripe unless `MPP_DEFAULT_METHOD=tempo` was also set. Which rail leads decides what a non-negotiating client answers. A route's own `methods=` was already order-respecting and is unchanged; `default_method` now only chooses the rail for routes that name none.
+- The offered-set rule lives in one place, `Payment\OfferedMethods`. The gate (via `SpecResolver`) and the discovery document had an implementation each, and they disagreed the moment one changed - the discovery document kept advertising a rail order the 402 no longer minted. A test now asserts the two agree.
+
+### Documentation
+
+- The multi-rail section now warns that rail order is significant for clients that do not send `Accept-Payment`. The spec asks clients to select a challenge by capability (B.4, SHOULD), but `npx mppx` 0.9.2 takes the first challenge unconditionally and errors if it cannot pay it. This means that on `methods=stripe|tempo` a crypto-only agent fails, while `methods=tempo|stripe` pays. List the rail your typical caller can pay first.
+
+## [2.0.0]
 
 **Breaking.** The wire format is now the MPP core spec ([draft-httpauth-payment-00](https://paymentauth.org/draft-httpauth-payment-00), with `tempoxyz/mpp-specs` main as the source of truth). Every 402, credential, and receipt this package emits or accepts changed shape. The change aligns the package with the published MPP spec, so it interoperates with any standard MPP agent. There is no wire back-compat with 1.x. Server-side integration code (routes, config, resolvers, preconditions, custom `Verifier`s) is largely unaffected. Any client written against the 1.x wire format must be migrated. Conformance is machine-checkable against your own app with `npx mppx@latest validate <url> --endpoint GET:/<route> --yes`.
 
