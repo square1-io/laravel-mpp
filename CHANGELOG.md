@@ -4,6 +4,13 @@ All notable changes to `laravel-mpp` are documented here.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html). The public API is the config file, the middleware argument syntax, the `#[RequiresPayment]` attribute, the `PaymentSpec` your checks and resolvers receive, the `Verifier` / `SettlementChecker` interfaces, and `RequirePayment::handle()`. Service constructors resolved from the container are internal and may change in a minor release.
 
+## [2.2.0]
+
+### Changed
+
+- **`Payment-Receipt` is now exactly the spec's receipt.** The header is `{status, method, timestamp, reference}`, as `draft-httpauth-payment-00` (§5.3) and the stripe and tempo charge drafts define it, and nothing more. The package extras `amount`, `currency`, and `challengeId` are removed. A client that wants the settled amount or the challenge it paid has both already, in the challenge it echoed to pay, and the rail's own record is one `reference` lookup away. This is a conformance change rather than a bug fix. Anything reading `amount`, `currency`, or `challengeId` off the receipt should read them from the echoed challenge instead.
+- `Protocol\Receipt` loses its `amount` and `currency` properties. It keeps `challengeId` on the object for server-side correlation, but no longer emits it. Internal protocol machinery, not part of the documented public API.
+
 ## [2.1.0]
 
 ### Changed

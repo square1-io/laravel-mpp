@@ -41,12 +41,25 @@ it('renders a spec base64url receipt for a stripe settlement', function () {
         ->and($receipt->settlementRef)->toBe('pi_1');
 });
 
-it('passes token base units through untouched for a tempo settlement', function () {
+it('renders the same receipt shape for a tempo settlement', function () {
     $receipt = Receipt::fromSettlement(aChallenge('tempo'), SettlementResult::settled('0xabc'), 'tempo');
     $decoded = decodeReceipt($receipt->header());
 
     expect($decoded['method'])->toBe('tempo')
-        ->and($decoded['reference'])->toBe('0xabc')
-        ->and($decoded['amount'])->toBe('500000')
-        ->and($decoded['currency'])->toBe('0x20C000000000000000000000b9537d11c60E8b50');
+        ->and($decoded['reference'])->toBe('0xabc');
+});
+
+it('carries exactly the spec receipt fields, never an amount or challengeId', function () {
+    // draft-httpauth-payment-00 §5.3 and the stripe / tempo charge drafts define
+    // the receipt as {status, method, timestamp, reference}, and reserve extra
+    // fields for method specifications. Amount and currency are deliberately
+    // absent: the payer holds the exact terms in the challenge they echoed, and
+    // rendering them here forced a units choice the rest of the wire format
+    // never makes.
+    foreach (['stripe' => SettlementResult::settled('pi_1', 50, 'USD'), 'tempo' => SettlementResult::settled('0xabc', '500000')] as $method => $result) {
+        $decoded = decodeReceipt(Receipt::fromSettlement(aChallenge($method), $result, $method)->header());
+
+        // JCS sorts keys, so the key order is the wire order.
+        expect(array_keys($decoded))->toBe(['method', 'reference', 'status', 'timestamp']);
+    }
 });

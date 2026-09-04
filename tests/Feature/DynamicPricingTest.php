@@ -247,7 +247,7 @@ it('settles at the challenged amount even after the resolver changes its answer'
     $response = payWithSpt($this, $challenge, '/price/tiered');
 
     $response->assertOk()->assertSee('TIERED');
-    expect(decodeReceipt($response->headers->get('Payment-Receipt'))['amount'])->toBe('2.00');
+    expect(FakeVerifier::$lastSettledAmount)->toBe('200');
 });
 
 it('cannot be turned free retroactively to settle a challenge for nothing', function () {
@@ -267,7 +267,7 @@ it('cannot be turned free retroactively to settle a challenge for nothing', func
     $response = payWithSpt($this, $challenge, '/price/tiered');
 
     $response->assertOk();
-    expect(decodeReceipt($response->headers->get('Payment-Receipt'))['amount'])->toBe('2.00');
+    expect(FakeVerifier::$lastSettledAmount)->toBe('200');
 });
 
 it('spends a metered session at the scope the resolver assigned', function () {
