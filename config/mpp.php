@@ -169,11 +169,115 @@ return [
     | The discovery draft requires it at GET /openapi.json, so the path is not
     | configurable. Disable it if the app serves its own OpenAPI document, and
     | merge the x-payment-info extension there instead.
+    |
+    | PRICES ARE NEVER CONFIGURED HERE. Everything under x-payment-info is read
+    | from the live router and the same request builders that mint the 402, so
+    | the document cannot advertise a price the gate does not charge. What is
+    | configured here is the rest of the draft: who runs the service, where it
+    | lives, and what it is for.
+    |
+    | Per-OPERATION documentation — a summary, an input or output schema, a note
+    | on an offer — belongs with the route rather than here. Write it on the
+    | route (`->discovery(summary: '…')`) or on the action
+    | (`#[DiscoveryInfo(summary: '…')]`); `operations` below is for routes you
+    | cannot annotate because you did not define them.
     */
     'discovery' => [
         'enabled' => (bool) env('MPP_DISCOVERY', true),
+
+        // ── The OpenAPI `info` object ────────────────────────────────────────
+        // `title` follows `app.name` when unset. `version` is YOUR API's
+        // version, not the package's or the protocol's.
         'title' => env('MPP_DISCOVERY_TITLE'),
         'version' => env('MPP_DISCOVERY_VERSION', '1.0.0'),
+        'summary' => env('MPP_DISCOVERY_SUMMARY'),           // one line
+        'description' => env('MPP_DISCOVERY_DESCRIPTION'),   // Markdown allowed
+        'terms_of_service' => env('MPP_DISCOVERY_TERMS'),    // URL
+
+        // Who to contact about the API, and under what licence it is offered.
+        // Both are standard OpenAPI objects; empty keys are omitted.
+        'contact' => [
+            'name' => env('MPP_DISCOVERY_CONTACT_NAME'),
+            'url' => env('MPP_DISCOVERY_CONTACT_URL'),
+            'email' => env('MPP_DISCOVERY_CONTACT_EMAIL'),
+        ],
+        'license' => [
+            'name' => env('MPP_DISCOVERY_LICENSE'),          // e.g. 'MIT'
+            'identifier' => env('MPP_DISCOVERY_LICENSE_ID'), // SPDX; or use `url`
+        ],
+
+        // ── Where the API lives ──────────────────────────────────────────────
+        // The OpenAPI `servers` array: the base URL every discovered path is
+        // relative to. Follows `app.url` when unset, which is right unless the
+        // API is served from another host or behind a path prefix. Takes plain
+        // URLs or the full OpenAPI form:
+        //   ['https://api.example.com']
+        //   [['url' => 'https://api.example.com', 'description' => 'Production']]
+        'servers' => null,
+
+        // ── The draft's x-service-info extension ─────────────────────────────
+        // What the service does and where to read more. Registries index on
+        // both, and this is what a search over a registry matches against, so
+        // it is worth filling in. Categories are free-form; the draft suggests
+        // communication, compute, data, developer-tools, media, search, social,
+        // storage, travel, and asks registries to allow at most five.
+        'categories' => array_filter(explode(',', (string) env('MPP_DISCOVERY_CATEGORIES', ''))),
+        'docs' => [
+            'homepage' => env('MPP_DISCOVERY_HOMEPAGE'),
+            'api_reference' => env('MPP_DISCOVERY_API_REFERENCE'),
+            'llms' => env('MPP_DISCOVERY_LLMS'),             // llms.txt, for agents
+        ],
+
+        // ── What the package reads off the application ───────────────────────
+        // A route's action already describes the operation; these decide how
+        // much of that description is published.
+        //
+        // `form_requests` derives an operation's input schema from the rules of
+        // the FormRequest its action type-hints. On by default: the rules are
+        // the schema, and a schema kept separately from the validator it
+        // describes goes stale. Turn it off to publish nothing but the
+        // permissive `{"type": "object"}` the package has always emitted.
+        'form_requests' => (bool) env('MPP_DISCOVERY_FORM_REQUESTS', true),
+        //
+        // `docblocks` turns the action's docblock into the operation's summary
+        // and description. OFF by default, deliberately: a docblock is written
+        // for colleagues and may say things its author would not publish to an
+        // unauthenticated endpoint that registries crawl. Read your docblocks,
+        // then turn it on.
+        'docblocks' => (bool) env('MPP_DISCOVERY_DOCBLOCKS', false),
+
+        // ── Response headers ─────────────────────────────────────────────────
+        // The draft recommends a 5-minute cache for services whose capabilities
+        // change infrequently, and CORS for browser-based clients reading the
+        // document cross-origin. Set either to null to send neither header.
+        'cache_control' => env('MPP_DISCOVERY_CACHE_CONTROL', 'public, max-age=300'),
+        'allow_origin' => env('MPP_DISCOVERY_ALLOW_ORIGIN', '*'),
+
+        // ── Per-operation documentation, for routes you cannot annotate ──────
+        // Keyed by route name (preferred — it is stable across URL changes),
+        // or by "GET /uri", or by "/uri". The value takes the same fields as
+        // #[DiscoveryInfo]. A route that states the same field nearer to
+        // itself wins; this fills the rest.
+        //
+        //   'reports.show' => [
+        //       'summary' => 'Fetch a report',
+        //       'priceNote' => 'Per report, whatever its length.',
+        //       'response' => ['type' => 'object', 'properties' => [
+        //           'id' => ['type' => 'string'],
+        //       ]],
+        //   ],
+        //
+        'operations' => [],
+
+        // ── The last word ────────────────────────────────────────────────────
+        // OpenAPI is larger than the part of it the payment drafts care about.
+        // Each entry is a [Class::class, 'method'] pair (resolved through the
+        // container, so it survives `config:cache`) that receives the finished
+        // document as an array and returns it — add `components`, a security
+        // scheme, free routes, anything. Stages run in order; a stage that
+        // throws or returns a non-array is logged and skipped, because a
+        // broken post-processor must not take discovery down.
+        'pipeline' => [],
     ],
 
     /*

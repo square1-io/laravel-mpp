@@ -4,6 +4,9 @@ namespace Square1\Mpp;
 
 use Illuminate\Contracts\Cache\Factory as CacheFactory;
 use Illuminate\Http\Client\Factory;
+use Illuminate\Http\JsonResponse;
+use Illuminate\Routing\Route;
+use Illuminate\Routing\Route as RoutingRoute;
 use Illuminate\Routing\Router;
 use Illuminate\Support\ServiceProvider;
 use Square1\Mpp\Discovery\DiscoveryDocument;
@@ -38,6 +41,12 @@ class MppServiceProvider extends ServiceProvider
     public function register(): void
     {
         $this->mergeConfigFrom(__DIR__.'/../config/mpp.php', 'mpp');
+
+        // Registered here rather than in boot(): every provider's register()
+        // runs before any boot(), and the application's route files are loaded
+        // from a boot(). A macro registered later would not exist yet for the
+        // routes that want to call it.
+        $this->registerRouteMacros();
 
         $this->app->singleton(ChallengeBinding::class, fn () => new ChallengeBinding(
             secret: ChallengeSecret::resolve(config('mpp.secret'), config('app.key')),
@@ -146,10 +155,9 @@ class MppServiceProvider extends ServiceProvider
         // path is fixed; an app serving its own OpenAPI doc disables this and
         // merges the x-payment-info extension itself.
         if (config('mpp.discovery.enabled', true)) {
-            $router->get(
-                '/openapi.json',
-                fn () => response()->json($this->app->make(DiscoveryDocument::class)->toArray())
-            )->name('mpp.discovery')->middleware(EnforceHttps::class);
+            $router->get('/openapi.json', fn () => $this->discoveryResponse())
+                ->name('mpp.discovery')
+                ->middleware(EnforceHttps::class);
         }
 
         // Opt-in: auto-enforce #[RequiresPayment] on the configured route groups.
@@ -158,6 +166,81 @@ class MppServiceProvider extends ServiceProvider
                 $router->pushMiddlewareToGroup($group, EnforcePaymentAttributes::class);
             }
         }
+    }
+
+    /**
+     * The discovery document and the two response headers the draft asks for.
+     *
+     * A registry re-crawls each service it lists, so the draft recommends a
+     * `Cache-Control` (5 minutes is its suggestion) and, for browser-based
+     * clients reading the document cross-origin, CORS. Both are advisory
+     * metadata on a public document, so both default to on; either is turned
+     * off by setting its config key to null.
+     */
+    private function discoveryResponse(): JsonResponse
+    {
+        $response = response()->json($this->app->make(DiscoveryDocument::class)->toArray());
+
+        $cacheControl = config('mpp.discovery.cache_control', 'public, max-age=300');
+        $origin = config('mpp.discovery.allow_origin', '*');
+
+        if (is_string($cacheControl) && $cacheControl !== '') {
+            $response->headers->set('Cache-Control', $cacheControl);
+        }
+
+        if (is_string($origin) && $origin !== '') {
+            $response->headers->set('Access-Control-Allow-Origin', $origin);
+        }
+
+        return $response;
+    }
+
+    /**
+     * `->discovery(...)` on a route: the route-file half of `#[DiscoveryInfo]`,
+     * for the closures and route-file definitions that have no action class to
+     * annotate.
+     *
+     *   Route::get('/clip', ClipController::class)
+     *       ->middleware('mpp:0.50,USD')
+     *       ->discovery(summary: 'Clip a video', priceNote: 'Per clip.');
+     *
+     * The arguments are `DiscoveryInfo`'s, and an array of them can be spread
+     * into the call — `->discovery(...$stated)`.
+     *
+     * The short name is the one to use, and it is left alone if the application
+     * already defines a `discovery()` macro of its own: silently replacing an
+     * app's macro would break the app to document it. `mppDiscovery()` is
+     * always registered, so a collision has a way out.
+     */
+    private function registerRouteMacros(): void
+    {
+        $macro = function (
+            ?string $summary = null,
+            ?string $description = null,
+            string|array|null $priceNote = null,
+            array $tags = [],
+            ?string $operationId = null,
+            string|array|null $request = null,
+            string|array|null $response = null,
+            array $parameters = [],
+            array $query = [],
+            bool $deprecated = false,
+            bool $hidden = false,
+        ) {
+            /** @var Route $this */
+            $this->action['mpp_discovery'] = array_filter(compact(
+                'summary', 'description', 'priceNote', 'tags', 'operationId',
+                'request', 'response', 'parameters', 'query', 'deprecated', 'hidden',
+            ), fn (mixed $value) => $value !== null && $value !== [] && $value !== false);
+
+            return $this;
+        };
+
+        if (! RoutingRoute::hasMacro('discovery')) {
+            RoutingRoute::macro('discovery', $macro);
+        }
+
+        RoutingRoute::macro('mppDiscovery', $macro);
     }
 
     /**

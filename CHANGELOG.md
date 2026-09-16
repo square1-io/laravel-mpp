@@ -2,7 +2,24 @@
 
 All notable changes to `laravel-mpp` are documented here.
 
-The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html). The public API is the config file, the middleware argument syntax, the `#[RequiresPayment]` attribute, the `PaymentSpec` your checks and resolvers receive, the `Verifier` / `SettlementChecker` interfaces, and `RequirePayment::handle()`. Service constructors resolved from the container are internal and may change in a minor release.
+The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html). The public API is the config file, the middleware argument syntax, the `#[RequiresPayment]` and `#[DiscoveryInfo]` attributes, the `->discovery()` route macro, the `PaymentSpec` your checks and resolvers receive, the `Verifier` / `SettlementChecker` interfaces, and `RequirePayment::handle()`. Service constructors resolved from the container are internal and may change in a minor release.
+
+## [2.3.0]
+
+### Added
+
+- **Discovery documents can now carry everything `draft-payment-discovery-01` asks for.** The generated `/openapi.json` was compliant but thin: it stated prices and nothing else. It can now state what an operation does, what to send it, what comes back, and who runs the service — the parts of the draft a price cannot supply. Nothing about `x-payment-info` changes: it is still derived from the live router and the same request builders that mint the 402, so the document still cannot advertise a price the gate does not charge.
+- The draft's `x-service-info` extension (`categories`, `docs.homepage`, `docs.apiReference`, `docs.llms`), the rest of the OpenAPI `info` object (`summary`, `description`, `termsOfService`, `contact`, `license`), and `servers` are configured under `mpp.discovery`. `title` still follows `app.name`, and `servers` now follows `app.url`.
+- Per-operation documentation — `summary`, `description`, `priceNote`, `tags`, `operationId`, `request`, `response`, `parameters`, `query`, `deprecated`, `hidden` — can be written in three places, merged field by field with the nearest to the route winning: a `->discovery(…)` route macro (aliased `->mppDiscovery(…)`), a new `#[DiscoveryInfo]` attribute on the action, and `mpp.discovery.operations` keyed by route name or `"GET /uri"` for routes you did not define. `priceNote` becomes each offer's `description`, as one note for every rail or a map keyed by method name.
+- `hidden: true` keeps a payable route out of the document without making it free.
+- Input schemas are derived from the `FormRequest` an action type-hints, translating types, formats, bounds, enumerations, nesting and requiredness into JSON Schema (`mpp.discovery.form_requests`, on by default). Rules that describe a database fact rather than a shape contribute nothing, and an unrecognised rule is ignored rather than guessed at. `request` and `response` also take a JSON Schema array, a full OpenAPI object, or the name of a class with a `schema()` method; `response` takes a bare schema for the 200 or a map keyed by status code.
+- A route's name becomes its `operationId`, and the action's docblock can become the operation's `summary` and `description` (`mpp.discovery.docblocks`, **off** by default — a docblock is written for colleagues, and publishing it to an unauthenticated endpoint that registries crawl should be a decision rather than an upgrade).
+- `mpp.discovery.pipeline` takes `[Class::class, 'method']` stages that receive and return the finished document, for anything in OpenAPI the package does not model. A stage that throws or returns a non-array is logged and skipped.
+- The document is served with the two response headers the draft recommends: `Cache-Control: public, max-age=300` and `Access-Control-Allow-Origin: *`. Set `mpp.discovery.cache_control` or `mpp.discovery.allow_origin` to null to drop either.
+
+### Fixed
+
+- A route with an optional parameter published an invalid path template. `/report/{year}/{month?}` was emitted verbatim, giving a path whose parameter is literally named `month?` and is declared nowhere. Path parameters are now declared (with a `where()` constraint carried across as an anchored `pattern`), and an optional Laravel parameter becomes the two OpenAPI paths it really is, since an OpenAPI path parameter is always required.
 
 ## [2.2.0]
 

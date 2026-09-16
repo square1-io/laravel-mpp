@@ -40,6 +40,7 @@ For a real-world demo, see [PayForGoals.com](https://www.payforgoals.com).
 - [Installation](#installation)
 - [Quickstart](#quickstart)
 - [Choose a Payment Rail](#choose-a-payment-rail)
+- [Discovery](#discovery)
 - [Protecting Routes](#protecting-routes)
 - [Metered Access](#metered-access)
 - [Retries and Idempotency](#retries-and-idempotency)
@@ -421,16 +422,6 @@ The server filters and ranks its offered challenges by the header. q-values, wil
 >
 > Two things follow. List the rail your typical caller can pay first, and treat "both rails from one URL" as working properly only for callers that send `Accept-Payment`; for callers that do not, you are really offering the first rail with the rest as ignored detail. The order you write is the order you get.
 
-### Discovery
-
-The package serves an advisory OpenAPI document at `/openapi.json`. It lists every payment-gated route with its `x-payment-info` offers. The package generates it from the live router. It resolves each route's price the same way the runtime does, using price-book entries, global defaults, and per-rail request builders. Routes priced per request emit `amount: null`. MPP agents use it to find payable endpoints, and `mppx validate` checks it.
-
-The discovery draft requires this document at `GET /openapi.json`, so the path is fixed. Disable it if your app serves its own OpenAPI document, and merge the `x-payment-info` extension there instead:
-
-```dotenv
-MPP_DISCOVERY=false
-```
-
 ### Validating Conformance
 
 Point the reference validator at your app. It exercises discovery, challenge format, and error handling. On testnet, with an auto-funded wallet, it can also run an on-chain tempo settlement:
@@ -438,6 +429,151 @@ Point the reference validator at your app. It exercises discovery, challenge for
 ```bash
 npx mppx@latest validate https://your-host --endpoint GET:/resource --yes
 ```
+
+
+## Discovery
+
+The package serves an advisory OpenAPI 3.1 document at `/openapi.json`, generated from the live router. Every payment-gated route appears with its `x-payment-info` offers, resolved exactly as the runtime resolves them: price-book entries, global defaults, per-rail request builders. Routes priced per request emit `amount: null`. MPP agents use the document to find payable endpoints before they call you, registries crawl it to list you, and `mppx validate` checks it.
+
+The discovery draft requires the document at `GET /openapi.json`, so the path is fixed. Disable it if your app serves its own OpenAPI document, and merge the `x-payment-info` extension there instead:
+
+```dotenv
+MPP_DISCOVERY=false
+```
+
+**Prices are never configured.** Everything under `x-payment-info` comes from the router and the same request builders that mint the 402, so the document cannot advertise a price the gate does not charge. Everything else in this section is documentation: what the operation does, what to send it, what comes back, and who runs the service.
+
+### What the Service Is
+
+`info`, `servers` and the draft's `x-service-info` extension do not vary per route, so they live in config. Where your app already states something, that is the default:
+
+```dotenv
+MPP_DISCOVERY_TITLE="Clip API"          # defaults to APP_NAME
+MPP_DISCOVERY_VERSION=2.1.0             # your API's version
+MPP_DISCOVERY_DESCRIPTION="Paid video endpoints."
+MPP_DISCOVERY_CATEGORIES=media,compute  # x-service-info.categories
+MPP_DISCOVERY_HOMEPAGE=https://example.com/docs
+MPP_DISCOVERY_API_REFERENCE=https://example.com/reference
+MPP_DISCOVERY_LLMS=https://example.com/llms.txt
+```
+
+`servers` follows `APP_URL` unless you set `mpp.discovery.servers`, which is what you want when the API lives on another host or behind a path prefix. Contact and licence details go in `config/mpp.php`; empty values are omitted rather than published blank.
+
+The draft's two recommended response headers are on by default — `Cache-Control: public, max-age=300` and `Access-Control-Allow-Origin: *`. Set `mpp.discovery.cache_control` or `mpp.discovery.allow_origin` to `null` to drop either.
+
+### What an Operation Is
+
+Per-operation documentation belongs with the route. There are three places to write it, and which one you reach for depends on where the route lives, not on what you want to say.
+
+On the action, next to `#[RequiresPayment]`:
+
+```php
+use Square1\Mpp\Attributes\DiscoveryInfo;
+use Square1\Mpp\Attributes\RequiresPayment;
+
+#[RequiresPayment(amount: '0.50', currency: 'USD', methods: ['tempo', 'stripe'])]
+#[DiscoveryInfo(
+    summary: 'Clip a video',
+    description: 'Returns a clip of the source video, starting at the requested offset.',
+    priceNote: ['tempo' => 'On-chain, per clip.', 'stripe' => 'Card, per clip.'],
+    tags: ['media'],
+    request: ClipRequest::class,
+    response: ['type' => 'object', 'required' => ['url'], 'properties' => [
+        'url' => ['type' => 'string', 'format' => 'uri'],
+    ]],
+)]
+public function clip(ClipRequest $request) { /* … */ }
+```
+
+On the route, for closures and route-file definitions:
+
+```php
+Route::post('/clip', fn () => /* … */)
+    ->middleware('mpp:0.50,USD')
+    ->discovery(summary: 'Clip a video', priceNote: 'Per clip, whatever its length.');
+```
+
+The macro takes the same arguments as the attribute, and an array of them can be spread into it — `->discovery(...$stated)`. It is registered as `discovery()` unless your app already defines a macro by that name; `mppDiscovery()` is always available.
+
+In config, for routes you did not define and cannot annotate. Key by route name (preferred — it survives a URL change), or by `"GET /uri"`, or by `"/uri"`:
+
+```php
+'operations' => [
+    'reports.show' => [
+        'summary' => 'Fetch a report',
+        'priceNote' => 'Per report.',
+        'parameters' => ['year' => 'Four-digit year.'],
+        'query' => ['format' => 'Output format.'],
+    ],
+],
+```
+
+The three merge field by field, nearest to the route winning: route, then action, then config. A summary in config survives a route macro that sets only a price note.
+
+`#[DiscoveryInfo]` and `->discovery()` take: `summary`, `description`, `priceNote`, `tags`, `operationId`, `request`, `response`, `parameters`, `query`, `deprecated`, `hidden`. `priceNote` becomes each offer's `description` — pass a string for one note across every rail, or a map keyed by method name to describe each rail in its own words. `hidden: true` keeps a route out of the document without making it free.
+
+### Input and Output Schemas
+
+The draft asks every payable operation to declare an input schema, and clients and registries may flag one that does not as "schema-missing". If your action type-hints a `FormRequest`, you have already written that schema, and the package reads it from there:
+
+```php
+public function rules(): array
+{
+    return [
+        'url' => 'required|url',
+        'seconds' => 'required|integer|min:1|max:60',
+        'format' => 'required|in:mp4,webm',
+        'tags' => 'array|max:5',
+        'tags.*' => 'string',
+    ];
+}
+```
+
+becomes types, formats, bounds, enumerations, nesting and requiredness in the published `requestBody`. Rules that describe a database fact rather than a shape — `unique`, `exists` — contribute nothing, and a rule the package does not recognise is ignored rather than guessed at: the 422 stays authoritative for the rest, exactly as the 402 does for price. Turn it off with `MPP_DISCOVERY_FORM_REQUESTS=false` and operations fall back to the permissive `{"type": "object"}` body the package has always emitted.
+
+`request` and `response` also take a JSON Schema array, a full OpenAPI `requestBody`/response array, or the name of any class with a `schema()` method. `response` takes a bare schema for the 200, or a map keyed by status code:
+
+```php
+#[DiscoveryInfo(response: [
+    '200' => ['type' => 'object', 'properties' => ['url' => ['type' => 'string']]],
+    '404' => ['description' => 'No such video.'],
+])]
+```
+
+A schema that cannot be resolved is logged and left out. The document is advisory: a broken schema reference costs an operation its schema, never its listing, and never the route its ability to charge.
+
+### What the Router Already Knows
+
+Some of the document needs nothing written for it at all:
+
+- A route's **name** becomes its `operationId` (dropped when a route serves several verbs or paths, since OpenAPI requires the id to be unique).
+- **Path parameters** are declared, with a `where()` constraint carried across as an anchored `pattern`. An optional Laravel parameter — `/report/{year}/{month?}` — becomes two OpenAPI paths rather than one optional parameter, because an OpenAPI path parameter is always required.
+- **Docblocks** on the action become the operation's `summary` and `description`, first paragraph and rest, annotation tags dropped. **Off by default**: a docblock is written for colleagues and may say things you would not publish to an unauthenticated endpoint that registries crawl. Read yours, then set `MPP_DISCOVERY_DOCBLOCKS=true`.
+
+### Anything Else
+
+OpenAPI is larger than the part of it the payment drafts care about. When you need something the package does not model — `components`, a security scheme, free routes alongside the paid ones — post-process the finished document:
+
+```php
+// config/mpp.php
+'pipeline' => [
+    [DiscoveryComponents::class, 'handle'],
+],
+```
+
+```php
+class DiscoveryComponents
+{
+    public function handle(array $document): array
+    {
+        $document['components'] = ['schemas' => [/* … */]];
+
+        return $document;
+    }
+}
+```
+
+Stages run in order and each takes and returns the document array. They are `[Class::class, 'method']` pairs resolved through the container, so the list survives `php artisan config:cache`. A stage that throws or returns something other than an array is logged and skipped — a broken post-processor must not take discovery down.
 
 
 ## Protecting Routes
@@ -892,6 +1028,16 @@ The main settings live in `config/mpp.php`.
 | `pricing.global` | Resolvers applied to every gated route, before route-specific ones. |
 | `preconditions.checks` | Named `[Class::class, 'method']` checks, keyed by the name routes reference. |
 | `preconditions.global` | Checks run on every gated route, before route-specific ones. |
+| `discovery.enabled` | Serves the OpenAPI document at `GET /openapi.json`. Default: `true`. |
+| `discovery.title` / `.version` | The document's `info.title` (defaults to `app.name`) and `info.version`. |
+| `discovery.summary` / `.description` / `.terms_of_service` / `.contact` / `.license` | The rest of the OpenAPI `info` object. Empty values are omitted. |
+| `discovery.servers` | OpenAPI `servers`. Null follows `app.url`. Takes plain URLs or the full OpenAPI form. |
+| `discovery.categories` / `discovery.docs.*` | The draft's `x-service-info`: what the service does, and where to read more. |
+| `discovery.form_requests` | Derives an operation's input schema from the `FormRequest` its action type-hints. Default: `true`. |
+| `discovery.docblocks` | Publishes the action's docblock as the operation's summary and description. Default: `false`. |
+| `discovery.cache_control` / `.allow_origin` | The response headers the draft recommends. Null sends neither. |
+| `discovery.operations` | Per-operation documentation for routes you cannot annotate, keyed by route name or `"GET /uri"`. |
+| `discovery.pipeline` | `[Class::class, 'method']` stages that post-process the finished document. |
 
 ### Price Book
 

@@ -8,6 +8,7 @@ use Square1\Mpp\Http\Middleware\EnforcePaymentAttributes;
 use Square1\Mpp\MppServiceProvider;
 use Square1\Mpp\Tests\Fakes\AllowPrecondition;
 use Square1\Mpp\Tests\Fakes\DenyPrecondition;
+use Square1\Mpp\Tests\Fakes\DocumentedController;
 use Square1\Mpp\Tests\Fakes\FakeTempoVerifier;
 use Square1\Mpp\Tests\Fakes\FakeVerifier;
 use Square1\Mpp\Tests\Fakes\PaidController;
@@ -175,6 +176,33 @@ abstract class TestCase extends OrchestraTestCase
         // No amount and no resolver either: nothing can ever price this.
         Route::get('/price/nothing', fn () => response('NOTHING', 200))
             ->middleware('mpp:scope=price.nothing');
+
+        // ── Discovery documentation routes ───────────────────────────────────
+        // One route per surface a site owner can document an operation from,
+        // so the precedence between them is asserted rather than assumed.
+        Route::get('/doc/clip', [DocumentedController::class, 'clip'])
+            ->middleware('mpp')->name('doc.clip');
+        Route::get('/doc/summarise', [DocumentedController::class, 'summarise'])->middleware('mpp');
+        Route::get('/doc/unlisted', [DocumentedController::class, 'unlisted'])->middleware('mpp');
+        Route::post('/doc/derived', [DocumentedController::class, 'derived'])->middleware('mpp');
+
+        // The same action behind a GET: a FormRequest type-hint on a verb that
+        // carries no body describes a query string, not a request body.
+        Route::get('/doc/derived', [DocumentedController::class, 'derived'])->middleware('mpp');
+
+        // Stated on the route itself, for a closure with no action to annotate.
+        Route::get('/doc/macro', fn () => response('MACRO', 200))
+            ->middleware('mpp:0.50,USD')
+            ->discovery(summary: 'Stated on the route', priceNote: 'Flat rate.');
+
+        // Named but undocumented: the name alone is an operationId.
+        Route::get('/doc/named', fn () => response('NAMED', 200))
+            ->middleware('mpp:0.50,USD')->name('doc.named');
+
+        // An optional parameter is two OpenAPI paths, and a `where()` constraint
+        // is a schema pattern.
+        Route::get('/doc/report/{year}/{month?}', fn () => response('REPORT', 200))
+            ->middleware('mpp:0.50,USD')->where('year', '[0-9]{4}');
 
         // Attribute auto-enforced by the EnforcePaymentAttributes middleware on a group.
         Route::middleware(EnforcePaymentAttributes::class)->group(function () {

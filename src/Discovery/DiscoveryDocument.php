@@ -5,7 +5,6 @@ namespace Square1\Mpp\Discovery;
 use Illuminate\Routing\Route;
 use Illuminate\Routing\Router;
 use Illuminate\Support\Facades\Log;
-use ReflectionClass;
 use Square1\Mpp\Attributes\RequiresPayment;
 use Square1\Mpp\Payment\OfferedMethods;
 use Square1\Mpp\Payment\PaymentSpec;
@@ -16,7 +15,7 @@ use Square1\Mpp\Protocol\ChallengeFactory;
  *
  * MPP clients use discovery to find payable endpoints before making a
  * request; the document is advisory only — the runtime 402 challenge stays
- * authoritative. Because of that, nothing here is hand-maintained: the
+ * authoritative. Because of that, nothing PRICED here is hand-maintained: the
  * generator walks the router for routes gated by the `mpp` middleware or the
  * #[RequiresPayment] attribute and derives each `x-payment-info` from the same
  * config and request builders that mint the live challenge, so the two can
@@ -32,6 +31,11 @@ use Square1\Mpp\Protocol\ChallengeFactory;
  * methods with an explicit `amount: null` — every x-payment-info field is
  * optional in the discovery schema, but the key is present so a client can
  * tell "priced later" from "not stated", and the 402 carries the real price.
+ *
+ * Everything the draft asks for that a price cannot supply — what the operation
+ * does, what to send it, what comes back, who runs the service — is stated by
+ * the site owner or read off the application; OperationInfoResolver and
+ * ServiceInfo settle where each field comes from.
  */
 class DiscoveryDocument
 {
@@ -44,7 +48,12 @@ class DiscoveryDocument
      */
     private const PROBE_AMOUNT = '1';
 
-    public function __construct(private readonly Router $router) {}
+    public function __construct(
+        private readonly Router $router,
+        private readonly OperationInfoResolver $operations = new OperationInfoResolver,
+        private readonly SchemaResolver $schemas = new SchemaResolver,
+        private readonly ServiceInfo $service = new ServiceInfo,
+    ) {}
 
     /**
      * @return array<string, mixed>
@@ -54,54 +63,263 @@ class DiscoveryDocument
         $paths = [];
 
         foreach ($this->router->getRoutes() as $route) {
-            $info = $this->paymentInfoFor($route);
+            $meta = $this->operations->for($route);
+
+            if ($meta->hidden === true) {
+                // Payable, deliberately unlisted. A site owner may want an
+                // endpoint chargeable without advertising it to every crawler;
+                // the 402 is unaffected.
+                continue;
+            }
+
+            $info = $this->paymentInfoFor($route, $meta);
 
             if ($info === null) {
                 continue;
             }
 
-            $path = '/'.ltrim($route->uri(), '/');
+            $variants = $this->pathVariants($route, $meta);
 
-            foreach ($route->methods() as $httpMethod) {
-                if (in_array($httpMethod, ['HEAD', 'OPTIONS'], true)) {
-                    continue;
+            // One route serving several paths (an optional parameter is really
+            // two operations) cannot reuse one operationId, which OpenAPI
+            // requires to be unique across the document.
+            $operationId = count($variants) > 1 ? null : $meta->operationId;
+
+            foreach ($variants as $path => $parameters) {
+                foreach ($route->methods() as $httpMethod) {
+                    if (in_array($httpMethod, ['HEAD', 'OPTIONS'], true)) {
+                        continue;
+                    }
+
+                    $paths[$path][strtolower($httpMethod)] = $this->operation(
+                        $info,
+                        $meta,
+                        $parameters,
+                        $httpMethod,
+                        $operationId,
+                    );
                 }
-
-                $operation = [
-                    'x-payment-info' => $info,
-                    'responses' => [
-                        '402' => ['description' => 'Payment Required'],
-                        '200' => ['description' => 'Successful response'],
-                    ],
-                ];
-
-                // Discovery consumers expect body-carrying operations to
-                // declare a requestBody; a permissive JSON object is honest
-                // for a payment-gated endpoint whose body is app-defined.
-                if (in_array($httpMethod, ['POST', 'PUT', 'PATCH'], true)) {
-                    $operation['requestBody'] = [
-                        'content' => ['application/json' => ['schema' => ['type' => 'object']]],
-                    ];
-                }
-
-                $paths[$path][strtolower($httpMethod)] = $operation;
             }
         }
 
-        return [
-            'openapi' => '3.1.0',
-            'info' => [
-                'title' => config('mpp.discovery.title') ?? config('app.name', 'API'),
-                'version' => (string) config('mpp.discovery.version', '1.0.0'),
-            ],
-            'paths' => $paths === [] ? (object) [] : $paths,
+        $document = ['openapi' => '3.1.0', 'info' => $this->service->info()];
+
+        if (($servers = $this->service->servers()) !== []) {
+            $document['servers'] = $servers;
+        }
+
+        if (($serviceInfo = $this->service->serviceInfo()) !== null) {
+            $document['x-service-info'] = $serviceInfo;
+        }
+
+        $document['paths'] = $paths === [] ? (object) [] : $paths;
+
+        return $this->pipeline($document);
+    }
+
+    /**
+     * One operation object.
+     *
+     * @param  array{offers: non-empty-list<array<string, mixed>>}  $info
+     * @param  list<array<string, mixed>>  $parameters
+     * @return array<string, mixed>
+     */
+    private function operation(array $info, OperationInfo $meta, array $parameters, string $httpMethod, ?string $operationId): array
+    {
+        $operation = array_filter([
+            'operationId' => $operationId,
+            'summary' => $meta->summary,
+            'description' => $meta->description,
+            'tags' => $meta->tags,
+        ], fn (mixed $value) => $value !== null && $value !== []);
+
+        if ($meta->deprecated === true) {
+            $operation['deprecated'] = true;
+        }
+
+        $operation['x-payment-info'] = $info;
+
+        $parameters = [...$parameters, ...$this->queryParameters($meta)];
+
+        if ($parameters !== []) {
+            $operation['parameters'] = $parameters;
+        }
+
+        // Discovery consumers expect body-carrying operations to declare a
+        // requestBody. A schema derived from the route's own FormRequest (or
+        // stated outright) is the one the draft asks for; a permissive JSON
+        // object remains the honest fallback for a payment-gated endpoint whose
+        // body is app-defined and undeclared.
+        if (in_array($httpMethod, ['POST', 'PUT', 'PATCH'], true)) {
+            $operation['requestBody'] = $this->schemas->requestBody($meta->request)
+                ?? ['content' => ['application/json' => ['schema' => ['type' => 'object']]]];
+        } elseif (($body = $this->schemas->requestBody($meta->request)) !== null) {
+            // A stated body on a GET is unusual but legal, and a site owner who
+            // wrote one meant it.
+            $operation['requestBody'] = $body;
+        }
+
+        // A stated response wins, and the draft's required 402 — plus a 200 to
+        // describe the thing being paid for — is added to whatever is left.
+        $operation['responses'] = $this->schemas->responses($meta->response) + [
+            '200' => ['description' => 'Successful response'],
+            '402' => ['description' => 'Payment Required'],
         ];
+
+        return $operation;
+    }
+
+    /**
+     * The OpenAPI paths one route serves, each with its own path parameters.
+     *
+     * A Laravel route is one pattern; an OpenAPI path is one template, and a
+     * path parameter in it is always required. An optional Laravel parameter —
+     * `/report/{year?}` — is therefore two OpenAPI paths rather than one
+     * optional parameter, and emitting `{year?}` verbatim (as this generator
+     * once did) publishes a template whose parameter is literally named
+     * "year?" and is declared nowhere.
+     *
+     * @return array<string, list<array<string, mixed>>> path => parameter objects
+     */
+    private function pathVariants(Route $route, OperationInfo $meta): array
+    {
+        $uri = '/'.ltrim($route->uri(), '/');
+        $wheres = $route->wheres;
+
+        preg_match_all('/\{\s*(\w+)\s*(\?)?\s*\}/', $uri, $matches, PREG_SET_ORDER | PREG_OFFSET_CAPTURE);
+
+        $variants = [];
+        $parameters = [];
+
+        foreach ($matches as $match) {
+            $name = $match[1][0];
+            $optional = ($match[2][0] ?? '') === '?';
+
+            // Everything up to an optional parameter is a path in its own
+            // right: the shorter form the route also answers.
+            if ($optional) {
+                $shorter = rtrim(substr($uri, 0, $match[0][1]), '/');
+                $variants[$shorter === '' ? '/' : $shorter] = $parameters;
+            }
+
+            $parameters[] = $this->parameter(
+                $name,
+                'path',
+                true,
+                $meta->parameters[$name] ?? null,
+                is_string($wheres[$name] ?? null) ? $wheres[$name] : null,
+            );
+        }
+
+        // The full form, with every optional parameter supplied, is always a
+        // path too.
+        $variants[preg_replace('/\{\s*(\w+)\s*\?\s*\}/', '{$1}', $uri) ?? $uri] = $parameters;
+
+        return $variants;
+    }
+
+    /**
+     * @return list<array<string, mixed>>
+     */
+    private function queryParameters(OperationInfo $meta): array
+    {
+        $parameters = [];
+
+        foreach ($meta->query as $name => $stated) {
+            $required = is_array($stated) && ($stated['required'] ?? false) === true;
+
+            $parameters[] = $this->parameter((string) $name, 'query', $required, $stated, null);
+        }
+
+        return $parameters;
+    }
+
+    /**
+     * One OpenAPI parameter object. A site owner states either a description —
+     * the only thing a path parameter usually needs — or a full parameter array
+     * to merge, for the cases where it needs more.
+     *
+     * @param  string|array<string, mixed>|null  $stated
+     * @return array<string, mixed>
+     */
+    private function parameter(string $name, string $in, bool $required, string|array|null $stated, ?string $pattern): array
+    {
+        $schema = ['type' => 'string'];
+
+        if ($pattern !== null && $pattern !== '') {
+            // A Laravel `where()` constraint is matched against the whole
+            // segment; a JSON Schema `pattern` is a search unless anchored, so
+            // an unanchored constraint is anchored on the way out to keep its
+            // meaning.
+            $schema['pattern'] = str_contains($pattern, '^') || str_contains($pattern, '$')
+                ? $pattern
+                : '^(?:'.$pattern.')$';
+        }
+
+        $parameter = ['name' => $name, 'in' => $in, 'required' => $required, 'schema' => $schema];
+
+        if (is_string($stated) && $stated !== '') {
+            $parameter['description'] = $stated;
+        }
+
+        if (is_array($stated)) {
+            // The stated array wins field by field, so `['schema' => …]`
+            // replaces the derived one and `['description' => …]` alone leaves
+            // it in place.
+            $parameter = $stated + $parameter;
+        }
+
+        return $parameter;
+    }
+
+    /**
+     * Hand the finished document to the application's own post-processors, the
+     * last word on everything.
+     *
+     * OpenAPI is large, this package models the part of it the payment drafts
+     * care about, and the gap between the two is where a site owner would
+     * otherwise be stuck: security schemes, webhooks, `$ref` components,
+     * whatever OpenAPI adds next. Rather than grow a config key per field, the
+     * document passes through `mpp.discovery.pipeline` — `[Class::class,
+     * 'method']` pairs, resolved through the container so the registry survives
+     * `config:cache` — each taking the document array and returning it.
+     *
+     * @param  array<string, mixed>  $document
+     * @return array<string, mixed>
+     */
+    private function pipeline(array $document): array
+    {
+        foreach ((array) config('mpp.discovery.pipeline', []) as $stage) {
+            if (! is_array($stage) || count($stage) !== 2 || ! is_string($stage[0])) {
+                Log::warning('[mpp] Ignoring a mpp.discovery.pipeline entry that is not a [Class::class, \'method\'] pair.');
+
+                continue;
+            }
+
+            try {
+                $result = app($stage[0])->{$stage[1]}($document);
+            } catch (\Throwable $e) {
+                Log::warning("[mpp] Discovery pipeline stage {$stage[0]}::{$stage[1]}() failed: ".$e->getMessage());
+
+                continue;
+            }
+
+            if (! is_array($result)) {
+                Log::warning("[mpp] Discovery pipeline stage {$stage[0]}::{$stage[1]}() did not return the document array; ignoring it.");
+
+                continue;
+            }
+
+            $document = $result;
+        }
+
+        return $document;
     }
 
     /**
      * @return array{offers: non-empty-list<array<string, mixed>>}|null null when the route is not payment-gated
      */
-    private function paymentInfoFor(Route $route): ?array
+    private function paymentInfoFor(Route $route, OperationInfo $meta): ?array
     {
         $args = $this->middlewareArgs($route);
 
@@ -125,7 +343,7 @@ class DiscoveryDocument
 
         $offers = [];
         foreach ($methods as $method) {
-            $offers[] = $this->offer($method, $amount, $currency);
+            $offers[] = $this->offer($method, $amount, $currency, $meta->priceNoteFor($method));
         }
 
         return $offers === [] ? null : ['offers' => $offers];
@@ -204,34 +422,11 @@ class DiscoveryDocument
      */
     private function attributeArgs(Route $route): ?array
     {
-        $action = $route->getActionName();
+        $attr = RouteAction::attribute($route, RequiresPayment::class);
 
-        if (! str_contains($action, '@') && ! class_exists($action)) {
+        if (! $attr instanceof RequiresPayment) {
             return null;
         }
-
-        [$class, $methodName] = str_contains($action, '@')
-            ? explode('@', $action, 2)
-            : [$action, '__invoke'];
-
-        if (! class_exists($class)) {
-            return null;
-        }
-
-        $reflection = new ReflectionClass($class);
-
-        if (! $reflection->hasMethod($methodName)) {
-            return null;
-        }
-
-        $attributes = $reflection->getMethod($methodName)->getAttributes(RequiresPayment::class)
-            ?: $reflection->getAttributes(RequiresPayment::class);
-
-        if ($attributes === []) {
-            return null;
-        }
-
-        $attr = $attributes[0]->newInstance();
 
         return $this->resolve(
             amount: $attr->amount,
@@ -269,7 +464,7 @@ class DiscoveryDocument
      *
      * @return array<string, mixed>
      */
-    private function offer(string $method, ?string $amount, string $currency): array
+    private function offer(string $method, ?string $amount, string $currency, ?string $note): array
     {
         $offer = ['method' => $method, 'intent' => 'charge'];
         $config = (array) config("mpp.methods.{$method}", []);
@@ -291,13 +486,19 @@ class DiscoveryDocument
             // only once someone calls the route, so say it here too.
             Log::warning("[mpp] Discovery could not derive the '{$method}' offer: ".$e->getMessage());
 
-            return $offer + ['amount' => null];
+            $offer['amount'] = null;
+
+            return $note === null ? $offer : $offer + ['description' => $note];
         }
 
         // The rail's own conversion is authoritative for a stated price; an
         // unstated one stays null however the probe converted.
         $offer['amount'] = $amount === null ? null : (string) $request['amount'];
         $offer['currency'] = (string) $request['currency'];
+
+        if ($note !== null) {
+            $offer['description'] = $note;
+        }
 
         return $offer;
     }
