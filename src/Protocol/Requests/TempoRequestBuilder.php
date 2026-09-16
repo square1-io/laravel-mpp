@@ -6,9 +6,11 @@ use Square1\Mpp\Exceptions\InvalidConfigurationException;
 use Square1\Mpp\Payment\PaymentSpec;
 
 /**
- * Request payload for the tempo rail (draft-tempo-charge shape): amount in the
- * TIP-20 token's base units, the token address as `currency`, the settlement
- * `recipient`, and the chain id + supported submission modes in methodDetails.
+ * The request payload for the tempo rail, in the shape of draft-tempo-charge.
+ *
+ * The payload carries the amount in the base units of the TIP-20 token, the
+ * token address as `currency`, the settlement `recipient`, and, in
+ * methodDetails, the chain id and the supported submission modes.
  */
 class TempoRequestBuilder implements RailRequestBuilder
 {
@@ -29,7 +31,7 @@ class TempoRequestBuilder implements RailRequestBuilder
 
         if (bccomp($scaled, $minor = bcadd($scaled, '0', 0), 8) !== 0) {
             throw new InvalidConfigurationException(
-                "Amount '{$spec->amount}' has more precision than the tempo token's {$decimals} decimals."
+                "Amount '{$spec->amount}' has more decimal places than the {$decimals} that the tempo token allows."
             );
         }
 
@@ -39,18 +41,21 @@ class TempoRequestBuilder implements RailRequestBuilder
             'recipient' => $recipient,
             'methodDetails' => [
                 'chainId' => $chainId,
-                // Pull only: TempoVerifier accepts a type="transaction" credential
-                // carrying a signed transaction for us to broadcast, and rejects
-                // everything else. Omitting supportedModes would let a conformant
-                // client assume push (type="hash", client broadcasts) works too.
+                // This is pull only. TempoVerifier accepts a credential with
+                // type="transaction", which carries a signed transaction for the
+                // server to broadcast. It rejects every other credential. If the
+                // builder omitted supportedModes, a conformant client could assume
+                // that push also works, which is type="hash" with the client
+                // broadcasting.
                 'supportedModes' => ['pull'],
-                // A random per-challenge bytes32 memo, advertised so a conformant
-                // client knows to pay with transferWithMemo carrying this exact
-                // value. It rides in the challenge `request`, so it is bound into
-                // the challenge id HMAC and cannot be swapped. The paid retry must
-                // present a transfer whose memo equals it, which binds the on-chain
-                // payment to this one challenge without any bespoke client-side
-                // memo derivation.
+                // This is a random bytes32 memo per challenge. The builder
+                // advertises it, so that a conformant client knows to pay with
+                // transferWithMemo and to carry this exact value. The memo travels
+                // in the `request` of the challenge, so the challenge id HMAC binds
+                // it and no one can change it. The paid retry must present a
+                // transfer whose memo equals this value. That binds the on-chain
+                // payment to this one challenge, and the client needs no special
+                // logic to derive a memo.
                 'memo' => '0x'.bin2hex(random_bytes(32)),
             ],
         ];

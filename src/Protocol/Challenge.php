@@ -7,23 +7,28 @@ use Square1\Mpp\Support\Base64Url;
 use Square1\Mpp\Support\Jcs;
 
 /**
- * One MPP challenge: a single `Payment …` entry in WWW-Authenticate, for one
- * settlement method (spec: draft-ryan-httpauth-payment). A 402 that offers
- * several rails carries several Challenges, each with its own binding id.
+ * One MPP challenge, which is one `Payment …` entry in WWW-Authenticate, for one
+ * settlement method. The spec is draft-ryan-httpauth-payment.
  *
- * Wire parameters are exactly the spec's: id, realm, method, intent, request
- * (base64url JCS JSON, rail-specific shape), expires, digest, opaque. The package's
- * economic extensions — grants (metered bundles) and scope — plus a per-mint
- * random `nonce` ride in `opaque`, the spec's server-correlation slot: a flat
- * string map, JCS-encoded, bound into the id, echoed back verbatim by
- * conformant clients. The nonce is what makes each minted id unique.
+ * A 402 that offers several rails carries several Challenges, and each one has
+ * its own binding id.
+ *
+ * The wire parameters are the parameters of the spec: id, realm, method, intent,
+ * request, expires, digest and opaque. The request is base64url JCS JSON, and
+ * its shape depends on the rail.
+ *
+ * The economic extensions of the package are grants, for a metered bundle, and
+ * scope. Those extensions and a random `nonce` per mint travel in `opaque`,
+ * which is the server-correlation slot of the spec. The slot holds a flat string
+ * map, encoded with JCS. The id binds it, and a conformant client echoes it
+ * without a change. The nonce is what makes each minted id unique.
  */
 class Challenge
 {
     /**
-     * @param  array<string, mixed>  $request  rail-specific payment request payload
-     * @param  array<string, string>  $opaque  flat string map of server correlation data
-     * @param  string|null  $digest  RFC 9530 Content-Digest of the challenged request body, null when it had none
+     * @param  array<string, mixed>  $request  the payment request payload of the rail
+     * @param  array<string, string>  $opaque  a flat string map of server correlation data
+     * @param  string|null  $digest  the RFC 9530 Content-Digest of the challenged request body, or null when the request had no body
      */
     public function __construct(
         public readonly string $id,
@@ -52,7 +57,8 @@ class Challenge
     }
 
     /**
-     * RFC 3339 form used both on the wire and in the binding's expires slot.
+     * Returns the RFC 3339 form, which the package uses both on the wire and in
+     * the expires slot of the binding.
      */
     public function expiresParam(): string
     {
@@ -60,8 +66,10 @@ class Challenge
     }
 
     /**
-     * The binding's digest slot: an absent digest contributes the empty string,
-     * so ids minted for body-less requests are unchanged by this parameter.
+     * Returns the digest slot of the binding.
+     *
+     * An absent digest contributes the empty string. This parameter therefore
+     * does not change an id that the server minted for a request with no body.
      */
     public function digestParam(): string
     {
@@ -69,7 +77,7 @@ class Challenge
     }
 
     /**
-     * This challenge as one `Payment …` header entry.
+     * Returns this challenge as one `Payment …` header entry.
      */
     public function headerValue(): string
     {
@@ -104,7 +112,8 @@ class Challenge
     }
 
     /**
-     * Amount in minor units, as carried in the rail request payload.
+     * Returns the amount in minor units, as the request payload of the rail
+     * carries it.
      */
     public function amount(): string
     {

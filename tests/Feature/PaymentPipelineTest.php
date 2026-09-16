@@ -88,7 +88,7 @@ it('rejects `mpp` used with neither arguments nor an attribute', function () {
     $this->withoutExceptionHandling();
 
     $this->get('/attr/missing');
-})->throws(InvalidConfigurationException::class, 'has no #[RequiresPayment] attribute');
+})->throws(InvalidConfigurationException::class, 'carries no #[RequiresPayment] attribute');
 
 // A route may state no price at all and leave it to its resolvers. Something
 // still has to supply one before the gate: the route, a global default, or a
@@ -119,8 +119,8 @@ it('refuses to serve when the resolver that owns the price declines', function (
     } catch (UnpriceableRequestException $e) {
         expect($e->getMessage())
             ->toContain('No price for route [GET price/resolver-owned]')  // which route
-            ->toContain('resolver(s) that ran (tiered) all declined')      // and why
-            ->toContain("return `['free' => true]` rather than null");     // and the likely mistake
+            ->toContain('price resolver that ran (tiered) returned null')  // and why
+            ->toContain("return `['free' => true]` instead of null");    // and the likely mistake
     }
 });
 
@@ -134,7 +134,7 @@ it('reports a declined price as a request problem, not a config one', function (
 
 it('asks for an amount when there is no resolver to have declined', function () {
     $this->withoutExceptionHandling()->get('/price/nothing');
-})->throws(UnpriceableRequestException::class, 'Give it an amount');
+})->throws(UnpriceableRequestException::class, 'Give the route an amount');
 
 it('lets a global default price a route whose resolver declines', function () {
     config()->set('mpp.defaults.amount', '7.00');
@@ -180,7 +180,7 @@ it('refuses to charge a waived spec handed straight to the gate', function () {
     ))->with(['free' => true]);
 
     app(PaymentGate::class)->process(Request::create('/x'), fn () => response('SERVED'), $spec);
-})->throws(InvalidConfigurationException::class, 'waived (free) spec reached the payment gate');
+})->throws(InvalidConfigurationException::class, 'A waived spec reached the payment gate');
 
 it('leaves an unattributed route in an auto-enforced group alone', function () {
     config()->set('mpp.pricing.global', ['tiered']);

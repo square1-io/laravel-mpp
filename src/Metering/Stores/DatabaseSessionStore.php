@@ -9,15 +9,17 @@ use Square1\Mpp\Metering\Session;
 use Square1\Mpp\Metering\SessionStore;
 
 /**
- * Database-backed session store. `consume()` is a single guarded UPDATE:
+ * A session store that uses the database. `consume()` is one guarded UPDATE:
  *
  *   UPDATE mpp_sessions SET remaining = remaining - 1
  *   WHERE id = ? AND scope = ? AND remaining > 0 AND expires_at > now
  *
- * A single UPDATE statement is atomic in every RDBMS, so the affected-row count
- * (1 or 0) tells us whether this caller got a credit — no row locks needed, and
- * no oversell even under heavy concurrency. Uses your default DB connection
- * unless configured otherwise.
+ * One UPDATE statement is atomic in every RDBMS. The count of affected rows,
+ * which is 1 or 0, therefore states whether this caller received a credit. The
+ * store needs no row lock, and it does not oversell under heavy concurrency.
+ *
+ * The store uses the default database connection, unless the config names
+ * another one.
  */
 class DatabaseSessionStore implements SessionStore
 {

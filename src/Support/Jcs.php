@@ -5,25 +5,30 @@ namespace Square1\Mpp\Support;
 use InvalidArgumentException;
 
 /**
- * JSON Canonicalization Scheme (RFC 8785) encoder.
+ * An encoder for the JSON Canonicalization Scheme, RFC 8785.
  *
- * The MPP core spec mandates JCS for the challenge `request` and `opaque`
- * values before base64url encoding: the challenge-binding HMAC covers the
- * encoded blob as it appears on the wire, so any serialisation-order or
- * escaping difference between implementations breaks verification.
+ * The MPP core spec requires JCS for the `request` and `opaque` values of a
+ * challenge, before the package encodes them with base64url. The HMAC of the
+ * challenge binding covers the encoded value as it appears on the wire. Any
+ * difference in serialisation order or in escaping between two implementations
+ * therefore breaks verification.
  *
- * Scope: object keys sorted by UTF-16 code unit, no insignificant whitespace,
- * minimal string escaping (unescaped unicode and slashes). Floats are
- * rejected — every monetary value in MPP is a string of minor units, and an
- * accidental float is a bug we want loud, not canonicalised.
+ * The encoder sorts the keys of an object by UTF-16 code unit, emits no
+ * insignificant whitespace, and escapes as little as possible. It leaves unicode
+ * and slashes unescaped.
+ *
+ * The encoder rejects a float. Every monetary value in MPP is a string of minor
+ * units. A float is therefore a defect, and the package reports it instead of
+ * canonicalising it.
  */
 final class Jcs
 {
     public static function encode(mixed $value): string
     {
-        // A stdClass is always a JSON object, even when empty or when its keys
-        // look list-like. This keeps {} distinct from [] at any nesting depth,
-        // which a PHP array cannot express (both decode to []).
+        // A stdClass is always a JSON object, even when it is empty, and even
+        // when its keys look like list indexes. This keeps {} distinct from []
+        // at any depth. A PHP array cannot express that difference, because both
+        // decode to [].
         if ($value instanceof \stdClass) {
             return self::encodeObject(get_object_vars($value));
         }
@@ -51,8 +56,10 @@ final class Jcs
     }
 
     /**
-     * Encode an associative map as a canonical JSON object: keys sorted by
-     * UTF-16 code unit, no insignificant whitespace.
+     * Encodes an associative map as a canonical JSON object.
+     *
+     * The method sorts the keys by UTF-16 code unit, and emits no insignificant
+     * whitespace.
      *
      * @param  array<string, mixed>  $map
      */
@@ -75,7 +82,8 @@ final class Jcs
     }
 
     /**
-     * RFC 8785 §3.2.3: property names sort by their UTF-16 code units.
+     * Sorts property names by their UTF-16 code units, as RFC 8785 §3.2.3
+     * requires.
      */
     private static function compareUtf16(string $a, string $b): int
     {

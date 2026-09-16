@@ -6,20 +6,24 @@ use Illuminate\Contracts\Cache\Repository;
 use Symfony\Component\HttpFoundation\Cookie;
 
 /**
- * Remembers a settled challenge just long enough to make a retry idempotent.
+ * Remembers a settled challenge for long enough to make a retry idempotent.
  *
- * Settlement burns the challenge (single-use), so without this a paid request
- * whose 200 was lost in transit would retry, find its challenge gone, be met
- * with a fresh 402, and pay a SECOND time for one resource. The ledger records
- * the settlement outcome keyed by challenge id (unique per mint thanks to the
- * binding nonce); a retry within `ttl` replays the original receipt instead of
- * charging again.
+ * Settlement burns the challenge, because a challenge is single-use. Without
+ * this ledger, a paid request whose 200 response was lost would retry, find no
+ * challenge, receive a fresh 402, and pay a SECOND time for one resource.
  *
- * TTL is a window, not forever: long enough to cover realistic client retries
- * (default 5 min, `mpp.settlement_replay_ttl`), short enough that the store does
- * not grow without bound. It is deliberately independent of the challenge TTL —
- * a challenge is live only until first use, but its receipt must survive the
- * retry window that opens AFTER it settles.
+ * The ledger records the settlement outcome under the challenge id. The binding
+ * nonce makes that id unique per mint. A retry within `ttl` replays the original
+ * receipt, and the client does not pay again.
+ *
+ * The TTL is a window and not a permanent record. It is long enough to cover the
+ * retries that a client makes in practice, and the default is five minutes, in
+ * `mpp.settlement_replay_ttl`. It is short enough to keep the store from growing
+ * without a limit.
+ *
+ * The TTL is deliberately separate from the challenge TTL. A challenge is live
+ * only until its first use. Its receipt must survive the retry window, and that
+ * window opens AFTER the challenge settles.
  */
 class SettlementLedger
 {
@@ -65,11 +69,12 @@ class SettlementLedger
             return null;
         }
 
-        // A record written before the current fields existed (a deploy landing
-        // inside the replay window) unserialises with those properties
-        // uninitialised. Without the fingerprint to authorise the replay, or the
-        // stored response to serve, it is not safe to replay: treat it as absent
-        // and let the client take a fresh challenge.
+        // A record that the server wrote before the current fields existed
+        // unserialises with those properties uninitialised. This happens when a
+        // deploy lands inside the replay window. Without the fingerprint to
+        // authorise the replay, and without the stored response to serve, a
+        // replay is not safe. Treat such a record as absent, and let the client
+        // take a fresh challenge.
         return isset($record->fingerprint, $record->status, $record->content) ? $record : null;
     }
 

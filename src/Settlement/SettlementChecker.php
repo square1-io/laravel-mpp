@@ -3,35 +3,42 @@
 namespace Square1\Mpp\Settlement;
 
 /**
- * Broadcasts a client-signed settlement transaction to an external rail and
- * reports the rail's view of it once mined.
+ * Broadcasts a settlement transaction that the client signed, to an external
+ * rail, and reports what the rail states about it after the network mines it.
  *
- * Used by rails (like Tempo) where the client signs and presents a COMPLETE,
- * ready-to-broadcast transaction — the server holds no key and pays no gas; it
- * only relays the signed bytes and then confirms the on-chain result. This
- * differs from Stripe, where the server initiates and confirms a PaymentIntent.
+ * A rail such as Tempo uses this interface. On such a rail, the client signs and
+ * presents a COMPLETE transaction that is ready to broadcast. The server holds
+ * no key and pays no gas. It relays the signed bytes, and then confirms the
+ * on-chain result. Stripe is different: there the server starts and confirms a
+ * PaymentIntent.
  *
- * The checker is intentionally narrow: it broadcasts and reads facts back from
- * the rail (mined status, the recipient/amount/token observed in the transfer
- * logs, confirmation depth) into a {@see SettlementOutcome}. It does NOT decide
- * whether those facts satisfy a challenge — that policy (amount/recipient/token/
- * memo-binding/finality) lives in the Verifier, which never trusts the client.
+ * The checker is deliberately narrow. It broadcasts the transaction, and it
+ * reads facts back from the rail into a {@see SettlementOutcome}. Those facts
+ * are the mined status, the recipient, the amount and the token that it observed
+ * in the transfer logs, and the confirmation depth.
  *
- * Implementations MUST fail closed: if broadcast fails, the transaction reverts,
- * the receipt is absent, or anything is uncertain, return
- * {@see SettlementOutcome::unconfirmed()} rather than a confirmed outcome.
+ * The checker does NOT decide whether those facts satisfy a challenge. The
+ * Verifier owns that policy, which covers the amount, the recipient, the token,
+ * the memo binding and finality. The Verifier never trusts the client.
+ *
+ * An implementation MUST fail closed. When the broadcast fails, when the
+ * transaction reverts, when the receipt is absent, or when anything is
+ * uncertain, it returns {@see SettlementOutcome::unconfirmed()} and not a
+ * confirmed outcome.
  */
 interface SettlementChecker
 {
     /**
-     * Broadcast the signed transaction (0x-hex) and confirm its on-chain result.
+     * Broadcasts the signed transaction, as 0x-hex, and confirms its on-chain
+     * result.
      *
      * @param  string  $signedTransaction  the raw signed transaction bytes (0x-hex)
-     * @param  string  $expectedToken  the token contract the transfer must target
-     * @param  string  $expectedRecipient  the address funds must settle to
-     * @param  string  $expectedAmount  the transfer amount in minor units (decimal string)
-     * @param  array<string, mixed>  $methodConfig  the rail's `mpp.methods.<name>` config
-     *                                              (rpc_url, chain_id, confirmations, …)
+     * @param  string  $expectedToken  the token contract that the transfer must target
+     * @param  string  $expectedRecipient  the address that the funds must settle to
+     * @param  string  $expectedAmount  the transfer amount in minor units, as a decimal string
+     * @param  array<string, mixed>  $methodConfig  the `mpp.methods.<name>` config of the rail,
+     *                                              which holds rpc_url, chain_id, confirmations
+     *                                              and the other settings
      */
     public function settle(
         string $signedTransaction,

@@ -5,28 +5,31 @@ namespace Square1\Mpp\Protocol;
 /**
  * A parsed `Authorization: Payment` credential.
  *
- * Spec form: `Payment <base64url>` decoding to
- * `{challenge: {id, …echoed params}, payload: {…rail proof}, source?}`.
- * The stored server-side challenge stays authoritative — the echo is matched
- * by id and never trusted for terms.
+ * The spec form is `Payment <base64url>`. It decodes to
+ * `{challenge: {id, …echoed params}, payload: {…rail proof}, source?}`. The
+ * challenge that the server stored stays authoritative. The package matches the
+ * echoed copy by id, and never trusts it for the terms.
  *
- * The package additionally accepts its prepaid-session extension,
- * `Payment session="sess_…"`, issued after a metered (grants > 1) settlement.
+ * The package also accepts its own prepaid-session extension,
+ * `Payment session="sess_…"`. The server issues that credential after it settles
+ * a metered payment, which is a payment with grants > 1.
  *
- * `spt()`/`proof()` read the rail proof out of the payload so verifiers stay
- * rail-neutral: `spt` is the Stripe payload key, `signature`/`hash` are
- * tempo's, and `proof` is the generic fallback for custom rails.
+ * `spt()` and `proof()` read the rail proof from the payload, so that a verifier
+ * stays independent of the rail. `spt` is the payload key of Stripe.
+ * `signature` and `hash` are the keys of tempo. `proof` is the general fallback
+ * for a custom rail.
  */
 class Credential
 {
     /**
-     * @param  array<string, mixed>  $challenge  the challenge parameters echoed by the client
-     * @param  array<string, mixed>  $payload  rail-specific settlement proof
-     * @param  string|null  $canonical  a type-aware canonical encoding of the
-     *                                  originally decoded credential ({challenge, payload, source}), computed by
-     *                                  the parser from the typed JSON graph. The replay fingerprint is taken
-     *                                  over this, because the array forms above cannot tell a nested `{}` from a
-     *                                  `[]`. Null for a session credential, which never settles.
+     * @param  array<string, mixed>  $challenge  the challenge parameters that the client echoed
+     * @param  array<string, mixed>  $payload  the settlement proof of the rail
+     * @param  string|null  $canonical  A canonical encoding of the decoded credential,
+     *                                  {challenge, payload, source}, that keeps the JSON types. The
+     *                                  parser computes it from the typed JSON graph. The replay
+     *                                  fingerprint covers this value, because the array forms above
+     *                                  cannot separate a nested `{}` from a `[]`. It is null for a
+     *                                  session credential, which never settles.
      */
     public function __construct(
         public readonly array $challenge = [],
@@ -54,12 +57,16 @@ class Credential
     }
 
     /**
-     * Whether this credential faithfully echoes the given challenge. Every
-     * parameter the challenge minted — realm, method, intent, request, expires,
-     * and (when present) digest and opaque — must be echoed back and match. A
-     * missing or altered field fails, so a bare `{id}` credential or a tampered
-     * echo is rejected. The stored challenge stays authoritative for dispatch;
-     * this enforces that the credential names the challenge it actually presents.
+     * Reports whether this credential echoes the given challenge correctly.
+     *
+     * The credential must echo every parameter that the server minted, and each
+     * one must match. Those parameters are the realm, the method, the intent, the
+     * request and the expiry, and, when the challenge carries them, the digest
+     * and the opaque value. A field that is absent or altered fails the check.
+     * The method therefore rejects a bare `{id}` credential and an altered echo.
+     *
+     * The stored challenge stays authoritative for dispatch. This check enforces
+     * that the credential names the challenge that it presents.
      */
     public function echoes(Challenge $challenge): bool
     {
@@ -96,7 +103,8 @@ class Credential
     }
 
     /**
-     * A generic settlement reference for rails that present one opaque proof.
+     * Returns a general settlement reference, for a rail that presents one
+     * opaque proof.
      */
     public function proof(): ?string
     {

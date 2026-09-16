@@ -5,8 +5,11 @@ namespace Square1\Mpp\Metering;
 use Carbon\CarbonImmutable;
 
 /**
- * A prepaid metering session: an opaque credit balance, decremented per request,
- * spendable only within its scope until it expires or hits zero.
+ * A prepaid metering session.
+ *
+ * The session is an opaque credit balance. The package decrements it on each
+ * request. A client can spend it only within its scope, and only until it
+ * expires or reaches zero.
  */
 class Session
 {

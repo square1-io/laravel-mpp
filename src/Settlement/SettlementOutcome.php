@@ -3,25 +3,28 @@
 namespace Square1\Mpp\Settlement;
 
 /**
- * The result of a {@see SettlementChecker} inspecting an on-chain (or other
- * external-rail) settlement proof. It reports whether the rail confirms a
- * finalised payment and, if so, the canonical settlement reference plus the
- * settled amount/currency/recipient the Verifier checks against the challenge.
+ * The result of a {@see SettlementChecker} that inspected a settlement proof on
+ * an external rail, such as a chain.
  *
- * A checker NEVER decides on its own whether the payment satisfies the
- * challenge — it only reports the facts it can read from the rail. The Verifier
- * owns the amount/recipient/finality matching against the signed challenge.
+ * The outcome states whether the rail confirms a finalised payment. When the
+ * rail does confirm one, the outcome also carries the canonical settlement
+ * reference, and the settled amount, currency and recipient. The Verifier checks
+ * those values against the challenge.
+ *
+ * A checker NEVER decides whether the payment satisfies the challenge. It
+ * reports the facts that it can read from the rail. The Verifier owns the match
+ * of amount, recipient and finality against the signed challenge.
  */
 final class SettlementOutcome
 {
     /**
      * @param  bool  $confirmed  whether the rail reports a finalised settlement for the proof
-     * @param  string|null  $settlementRef  canonical reference for the settlement (e.g. tx hash)
-     * @param  int|string|null  $amountMinor  settled amount in minor units, as read from the rail (a string keeps an on-chain amount exact above PHP_INT_MAX)
-     * @param  string|null  $currency  settled currency / asset code, as read from the rail
-     * @param  string|null  $recipient  the address/account funds settled to, as read from the rail
-     * @param  int|null  $confirmations  confirmations observed for the settlement, if known
-     * @param  string|null  $reason  human-readable failure reason when not confirmed
+     * @param  string|null  $settlementRef  the canonical reference for the settlement, such as a transaction hash
+     * @param  int|string|null  $amountMinor  the settled amount in minor units, as read from the rail. A string keeps an on-chain amount exact above PHP_INT_MAX.
+     * @param  string|null  $currency  the settled currency or asset code, as read from the rail
+     * @param  string|null  $recipient  the address or account that the funds settled to, as read from the rail
+     * @param  int|null  $confirmations  the confirmations observed for the settlement, when known
+     * @param  string|null  $reason  the failure reason, in plain words, when the rail does not confirm
      */
     public function __construct(
         public readonly bool $confirmed,

@@ -6,33 +6,37 @@ use Square1\Mpp\Exceptions\InvalidConfigurationException;
 use Square1\Mpp\Support\Money;
 
 /**
- * The resolved payment requirement for a route: how much, in what currency, how
- * many accesses one payment grants, within what scope, and which settlement
- * methods are offered. Built from middleware arguments or a #[RequiresPayment]
- * attribute and handed to the PaymentGate.
+ * The resolved payment requirement for a route.
  *
- * `method` is the PRIMARY (first/default) offered method, kept for ordering and
- * single-method back-compat. `offeredMethods` is the full ordered set; when it
- * holds a single entry the resulting challenge is byte-identical to a
- * pre-multi-rail challenge.
+ * The spec states the amount, the currency, the number of accesses that one
+ * payment grants, the scope, and the offered settlement methods. The package
+ * builds it from middleware arguments or from a #[RequiresPayment] attribute,
+ * and passes it to the PaymentGate.
  *
- * The spec is immutable. A price resolver adjusts one with `with()`, which
- * returns a new instance and validates the overrides (see that method).
+ * `method` is the PRIMARY offered method, which is the first and default one.
+ * The package keeps it for ordering and for compatibility with single-method
+ * routes. `offeredMethods` is the full ordered set. When that set holds one
+ * entry, the challenge is byte-identical to a challenge from before the package
+ * supported several rails.
+ *
+ * The spec is immutable. A price resolver changes one with `with()`, which
+ * returns a new instance and validates the overrides. See that method.
  */
 final class PaymentSpec
 {
-    /** The only keys a price resolver may override. */
+    /** The only keys that a price resolver can override. */
     private const OVERRIDABLE = ['amount', 'currency', 'grants', 'scope', 'free'];
 
     /**
-     * @param  ?string  $amount  null when the route states no price and leaves it entirely to
-     *                           its resolvers. Resolved before the spec reaches the gate: a
-     *                           chargeable spec always has an amount by then, so only a price
-     *                           resolver can ever be handed a null one.
+     * @param  ?string  $amount  Null when the route states no price and leaves it to its
+     *                           resolvers. The package resolves the amount before the spec
+     *                           reaches the gate. A chargeable spec therefore always has an
+     *                           amount by then, and only a price resolver can receive a null
+     *                           one.
      * @param  list<string>  $offeredMethods  ordered set of offered method names (primary first)
      * @param  list<string>  $preconditions  named precondition checks to run before a challenge is minted or settled
      * @param  list<string>  $pricing  named price resolvers to apply to this route, in order
-     * @param  bool  $free  when true the gate serves the route without charging (set only by a resolver returning `free => true`)
+     * @param  bool  $free  when true the gate serves the route without a charge (only a resolver that returns `free => true` sets it)
      */
     public function __construct(
         public readonly ?string $amount,
@@ -52,9 +56,12 @@ final class PaymentSpec
     }
 
     /**
-     * Has anything set a price yet — the route itself, a global default, or a
-     * resolver? A spec that is still unpriced once its resolvers have run, and
-     * was not waived, cannot be charged for and never reaches the gate.
+     * Reports whether anything has set a price: the route, a global default, or
+     * a resolver.
+     *
+     * A spec that is still unpriced after its resolvers have run, and that no
+     * resolver waived, cannot be charged for. Such a spec never reaches the
+     * gate.
      */
     public function isPriced(): bool
     {
@@ -62,16 +69,18 @@ final class PaymentSpec
     }
 
     /**
-     * Return a copy with a price resolver's overrides applied.
+     * Returns a copy with the overrides of a price resolver applied.
      *
-     * Only `amount`, `currency`, `grants`, `scope` and `free` may be overridden;
-     * the rail fields (`method`, `offeredMethods`) are resolved once by the
-     * SpecResolver and are not a resolver's to change. An unrecognised key throws
-     * rather than being ignored, so a typo can never silently serve the wrong price.
+     * A resolver can override only `amount`, `currency`, `grants`, `scope` and
+     * `free`. The SpecResolver resolves the rail fields, `method` and
+     * `offeredMethods`, once, and a price resolver cannot change them. An
+     * unrecognised key throws, and the method does not ignore it. A typo
+     * therefore cannot serve the wrong price without a message.
      *
-     * A free route must be stated as `free => true`. A zero, negative or
-     * non-numeric `amount` is rejected, so a resolver that computes an empty or
-     * bad value fails loudly instead of quietly giving the resource away.
+     * A resolver must state a free route as `free => true`. The method rejects a
+     * zero, negative or non-numeric `amount`. A resolver that computes an empty
+     * or incorrect value therefore fails with a message, and does not give the
+     * resource away.
      *
      * @param  array<string, mixed>  $overrides
      */
@@ -81,25 +90,26 @@ final class PaymentSpec
 
         if ($unknown !== []) {
             throw new InvalidConfigurationException(sprintf(
-                'A price resolver returned unknown override(s): %s. Only %s may be overridden.',
+                'A price resolver returned keys that it cannot override: %s. It can override only %s.',
                 implode(', ', $unknown),
                 implode(', ', self::OVERRIDABLE),
             ));
         }
 
-        // The one rule that spans two keys: `free` and `amount` together is
-        // ambiguous — a resolver that computes both has a bug, and guessing which
-        // one wins is exactly the kind of silent mistake this list guards against.
+        // This is the one rule that covers two keys. `free` and `amount`
+        // together are ambiguous. A resolver that computes both has a defect,
+        // and to choose one of them would be the kind of silent mistake that
+        // this list prevents.
         if (($overrides['free'] ?? false) === true && array_key_exists('amount', $overrides)) {
             throw new InvalidConfigurationException(
-                "A price resolver returned both 'free' => true and an 'amount'. Return one or the other: "
-                ."'free' => true waives the charge entirely."
+                "A price resolver returned both 'free' => true and an 'amount'. Return one of them. "
+                ."'free' => true waives the whole charge."
             );
         }
 
         return new self(
             amount: $this->overrideAmount($overrides),
-            currency: $this->overrideString($overrides, 'currency', $this->currency, upper: true, hint: "Return a currency code like 'USD', or omit the key."),
+            currency: $this->overrideString($overrides, 'currency', $this->currency, upper: true, hint: "Return a currency code such as 'USD', or omit the key."),
             grants: $this->overrideGrants($overrides),
             scope: $this->overrideString($overrides, 'scope', $this->scope, upper: false, hint: 'Return a non-empty scope, or omit the key.'),
             method: $this->method,
@@ -121,7 +131,7 @@ final class PaymentSpec
 
         if (! is_bool($overrides['free'])) {
             throw new InvalidConfigurationException(
-                "A price resolver returned a non-boolean 'free'. Use `'free' => true` to waive the charge."
+                "A price resolver returned a 'free' value that is not a boolean. Use `'free' => true` to waive the charge."
             );
         }
 
@@ -141,18 +151,19 @@ final class PaymentSpec
 
         if (! is_string($amount) && ! is_int($amount) && ! is_float($amount)) {
             throw new InvalidConfigurationException(
-                "A price resolver returned a non-numeric 'amount'. Return a decimal string like '2.00'."
+                "A price resolver returned an 'amount' that is not numeric. Return a decimal string such as '2.00'."
             );
         }
 
         $amount = trim((string) $amount);
 
-        // Format is Money's rule (so the gate and mint time agree on what a
-        // well-formed amount is); "must be positive" is this spec's own.
+        // Money owns the format rule, so the gate and the mint agree on what a
+        // well-formed amount is. This class owns the rule that the amount must
+        // be positive.
         if (! Money::isValidAmount($amount) || (float) $amount <= 0) {
             throw new InvalidConfigurationException(sprintf(
-                "A price resolver returned an invalid 'amount' (%s). It must be a positive number; "
-                ."to waive the charge return `'free' => true` instead.",
+                "A price resolver returned an 'amount' that is not valid (%s). The amount must be a "
+                ."positive number. To waive the charge, return `'free' => true` instead.",
                 $amount === '' ? "''" : $amount,
             ));
         }
@@ -161,8 +172,10 @@ final class PaymentSpec
     }
 
     /**
-     * Shared shape for the string overrides: absent leaves the current value, a
-     * non-string or blank one is a resolver bug and throws.
+     * The shared rule for the string overrides.
+     *
+     * An absent key keeps the current value. A value that is not a string, or
+     * that is blank, is a defect in the resolver, and the method throws.
      *
      * @param  array<string, mixed>  $overrides
      */
@@ -196,7 +209,7 @@ final class PaymentSpec
 
         if ((! is_int($grants) && ! (is_string($grants) && ctype_digit($grants))) || (int) $grants < 1) {
             throw new InvalidConfigurationException(
-                "A price resolver returned an invalid 'grants'. It must be an integer of 1 or more."
+                "A price resolver returned a 'grants' value that is not valid. It must be an integer of 1 or more."
             );
         }
 

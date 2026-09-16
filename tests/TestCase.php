@@ -8,6 +8,7 @@ use Square1\Mpp\Http\Middleware\EnforcePaymentAttributes;
 use Square1\Mpp\MppServiceProvider;
 use Square1\Mpp\Tests\Fakes\AllowPrecondition;
 use Square1\Mpp\Tests\Fakes\DenyPrecondition;
+use Square1\Mpp\Tests\Fakes\DocumentedController;
 use Square1\Mpp\Tests\Fakes\FakeTempoVerifier;
 use Square1\Mpp\Tests\Fakes\FakeVerifier;
 use Square1\Mpp\Tests\Fakes\PaidController;
@@ -175,6 +176,63 @@ abstract class TestCase extends OrchestraTestCase
         // No amount and no resolver either: nothing can ever price this.
         Route::get('/price/nothing', fn () => response('NOTHING', 200))
             ->middleware('mpp:scope=price.nothing');
+
+        // ── Discovery documentation routes ───────────────────────────────────
+        // One route per surface a site owner can document an operation from,
+        // so the precedence between them is asserted rather than assumed.
+        Route::get('/doc/clip', [DocumentedController::class, 'clip'])
+            ->middleware('mpp')->name('doc.clip');
+        Route::get('/doc/summarise', [DocumentedController::class, 'summarise'])->middleware('mpp');
+        Route::get('/doc/unlisted', [DocumentedController::class, 'unlisted'])->middleware('mpp');
+        Route::post('/doc/derived', [DocumentedController::class, 'derived'])->middleware('mpp');
+
+        // The same action behind a GET: a FormRequest type-hint on a verb that
+        // carries no body describes a query string, not a request body.
+        Route::get('/doc/derived', [DocumentedController::class, 'derived'])->middleware('mpp');
+
+        // Stated on the route itself, for a closure with no action to annotate.
+        Route::get('/doc/macro', fn () => response('MACRO', 200))
+            ->middleware('mpp:0.50,USD')
+            ->discovery(summary: 'Stated on the route', priceNote: 'Flat rate.');
+
+        // Named but undocumented: the name alone is an operationId.
+        Route::get('/doc/named', fn () => response('NAMED', 200))
+            ->middleware('mpp:0.50,USD')->name('doc.named');
+
+        // An optional parameter is two OpenAPI paths, and a `where()` constraint
+        // is a schema pattern.
+        Route::get('/doc/report/{year}/{month?}', fn () => response('REPORT', 200))
+            ->middleware('mpp:0.50,USD')->where('year', '[0-9]{4}');
+
+        // A typed path parameter, and a `whereNumber()` constraint on a closure
+        // route, so the document can state an integer rather than a string.
+        Route::get('/doc/item/{id}', [DocumentedController::class, 'item'])->middleware('mpp');
+        Route::get('/doc/tick/{n}', fn () => response('TICK', 200))
+            ->middleware('mpp:0.50,USD')->whereNumber('n');
+
+        // A GET action whose FormRequest validates the query string.
+        Route::get('/doc/report-query', [DocumentedController::class, 'report'])->middleware('mpp');
+
+        // A response map whose entries are class names.
+        Route::get('/doc/score', [DocumentedController::class, 'score'])->middleware('mpp');
+
+        // A response object that states its shape in the types of its class.
+        Route::get('/doc/result', [DocumentedController::class, 'result'])->middleware('mpp');
+
+        // A response that states headers of its own beside a schema.
+        Route::get('/doc/limited', [DocumentedController::class, 'limited'])->middleware('mpp');
+
+        // A response class that serializes itself under its own key names.
+        Route::get('/doc/serialized', [DocumentedController::class, 'serialized'])->middleware('mpp');
+
+        // A metered route, whose success carries the session header.
+        Route::get('/doc/metered', fn () => response('METERED', 200))
+            ->middleware('mpp:0.50,USD,grants=10,scope=doc.metered');
+
+        // ── Free routes ──────────────────────────────────────────────────────
+        // Not payment-gated. Listed only when `mpp.discovery.include` names them.
+        Route::get('/free/redirect/{slug}', fn () => redirect('/'))->name('free.redirect');
+        Route::get('/free/health', fn () => response()->json(['ok' => true]));
 
         // Attribute auto-enforced by the EnforcePaymentAttributes middleware on a group.
         Route::middleware(EnforcePaymentAttributes::class)->group(function () {

@@ -10,17 +10,21 @@ use Square1\Mpp\Payment\PaymentPipeline;
 use Symfony\Component\HttpFoundation\Response;
 
 /**
- * Auto-enforces the #[RequiresPayment] attribute. Registered on the configured
- * route groups when `mpp.attributes.enabled` is true, so annotating a controller
- * action is all that's needed — no per-route middleware wiring.
+ * Enforces the #[RequiresPayment] attribute automatically.
  *
- * Runs after routing (it inspects the matched route), so route caching is fine.
- * Passes through unattributed routes, and routes already carrying the `mpp`
- * middleware (to avoid charging twice).
+ * The package registers this middleware on the configured route groups when
+ * `mpp.attributes.enabled` is true. A site owner then annotates a controller
+ * action, and wires no middleware for each route.
  *
- * Deciding whether the route is guarded is all this does. An attributed route is
- * handed to the same PaymentPipeline the `mpp` middleware uses, so pricing,
- * preconditions and settlement behave identically however a route was declared.
+ * The middleware runs after routing, because it inspects the matched route.
+ * Route caching therefore works. It passes through a route with no attribute,
+ * and a route that already carries the `mpp` middleware, so that the package
+ * does not charge twice.
+ *
+ * This class decides only whether the route is guarded. It passes an annotated
+ * route to the same PaymentPipeline that the `mpp` middleware uses. The pricing,
+ * the preconditions and the settlement therefore behave in the same way, however
+ * a site owner declared the route.
  */
 class EnforcePaymentAttributes
 {
@@ -30,8 +34,9 @@ class EnforcePaymentAttributes
     {
         $route = $request->route();
 
-        // Read once: resolving the attribute costs reflection per request, and
-        // the pipeline needs the same instance this check was made on.
+        // Read the attribute once. To resolve it costs reflection on each
+        // request, and the pipeline needs the same instance that this check
+        // used.
         $attribute = AttributeResolver::forRoute($route);
 
         if ($attribute === null || $this->alreadyGuarded($route)) {

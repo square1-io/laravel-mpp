@@ -3,23 +3,27 @@
 namespace Square1\Mpp\Support\Evm;
 
 /**
- * Pure-PHP Keccak-256 (the Ethereum hash) — NOT FIPS SHA3-256.
+ * Keccak-256 in pure PHP, which is the hash that Ethereum uses. It is NOT FIPS
+ * SHA3-256.
  *
- * Ethereum/EVM uses original Keccak with the `0x01` domain-separation pad,
- * whereas PHP's `hash('sha3-256', …)` uses the standardised `0x06` pad and
- * therefore produces different digests. The Tempo/mppx wire format hashes with
- * Keccak-256 in three places this package must reproduce byte-for-byte:
+ * Ethereum and the EVM use the original Keccak, with the `0x01`
+ * domain-separation pad. The `hash('sha3-256', …)` function of PHP uses the
+ * standardised `0x06` pad, and it therefore produces different digests.
  *
- *   - ABI function selectors (`keccak256(signature)[0..4]`),
- *   - the on-chain transaction hash (`keccak256(serializedTransaction)`).
+ * The Tempo and mppx wire format hashes with Keccak-256 in places that this
+ * package must reproduce byte for byte:
  *
- * Implemented over GMP so it works wherever the package runs without a native
- * keccak build. It is only used on small inputs (a few hundred bytes at most),
- * so the cost is negligible.
+ *   - the ABI function selectors, which are `keccak256(signature)[0..4]`;
+ *   - the on-chain transaction hash, which is
+ *     `keccak256(serializedTransaction)`.
+ *
+ * The class uses GMP, so it works wherever the package runs, and needs no native
+ * keccak build. It runs on small inputs only, of at most a few hundred bytes, so
+ * the cost is very small.
  */
 final class Keccak
 {
-    /** Round constants (iota step). */
+    /** The round constants, for the iota step. */
     private const RC = [
         '0x0000000000000001', '0x0000000000008082', '0x800000000000808a', '0x8000000080008000',
         '0x000000000000808b', '0x0000000080000001', '0x8000000080008081', '0x8000000000008009',
@@ -29,7 +33,7 @@ final class Keccak
         '0x8000000080008081', '0x8000000000008080', '0x0000000080000001', '0x8000000080008008',
     ];
 
-    /** Rotation offsets (rho step), indexed [x][y]. */
+    /** The rotation offsets, for the rho step, indexed [x][y]. */
     private const ROT = [
         [0, 36, 3, 41, 18],
         [1, 44, 10, 45, 2],
@@ -39,13 +43,14 @@ final class Keccak
     ];
 
     /**
-     * Keccak-256 of raw bytes, returned as 32 raw bytes.
+     * Returns the Keccak-256 of raw bytes, as 32 raw bytes.
      */
     public static function hash(string $message): string
     {
-        $rate = 136; // 1088-bit rate for Keccak-256 (capacity 512).
+        $rate = 136; // the 1088-bit rate of Keccak-256, whose capacity is 512
 
-        // Keccak padding: append 0x01, zero-fill, set the top bit of the last byte.
+        // This is the Keccak padding. Append 0x01, fill with zeros, and set the
+        // top bit of the last byte.
         $message .= "\x01";
         while (strlen($message) % $rate !== 0) {
             $message .= "\x00";
@@ -71,7 +76,8 @@ final class Keccak
             self::permute($state, $mask);
         }
 
-        // Squeeze the first 32 bytes (4 lanes), little-endian per lane.
+        // Squeeze the first 32 bytes, which are 4 lanes. Each lane is
+        // little-endian.
         $out = '';
         for ($i = 0; $i < 4; $i++) {
             $lane = $state[$i];
@@ -85,7 +91,7 @@ final class Keccak
     }
 
     /**
-     * Keccak-256 returned as a lowercase 0x-prefixed hex string.
+     * Returns the Keccak-256 as a hex string in lower case, with a 0x prefix.
      */
     public static function hashHex(string $message): string
     {

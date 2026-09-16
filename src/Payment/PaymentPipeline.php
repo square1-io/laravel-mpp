@@ -12,24 +12,25 @@ use Symfony\Component\HttpFoundation\Response;
 /**
  * The one path from a guarded route to the payment gate.
  *
- * A route can declare its payment two ways — middleware arguments, or a
- * #[RequiresPayment] attribute enforced automatically — and each has its own
- * middleware. Only where the requirement comes FROM differs; everything after
- * that is identical for both, and lives here exactly once:
+ * A route can declare its payment in two ways: through middleware arguments,
+ * or through a #[RequiresPayment] attribute that the package enforces
+ * automatically. Each way has its own middleware. Only the source of the
+ * requirement differs. Every step after that is the same for both, and this
+ * class holds those steps once:
  *
  *   resolve the spec  ->  price it  ->  run its preconditions  ->  gate
  *                                          |            |
  *                                     reject with    serve free
  *                                     a Response     (no charge)
  *
- * Keeping this in one place is not a tidiness preference. When it was spread
- * across the middleware, the attribute path silently skipped preconditions,
- * because it reaches the gate without passing through the `mpp` middleware at
- * all. Any future request-scoped concern that must run exactly once per guarded
- * request belongs in run(), where neither entry point can miss it.
+ * These steps are in one place for a reason. When the middleware held them,
+ * the attribute path skipped the preconditions, because it reaches the gate
+ * without the `mpp` middleware. Any future concern that must run exactly once
+ * per guarded request belongs in run(), where neither entry point can omit it.
  *
- * The gate is left to do only what its own docblock describes: decide how an
- * already-priced, already-vetted request pays. It never sees a free spec.
+ * The gate then does only what its own docblock describes. It decides how a
+ * request that the package has priced and checked pays. It never receives a
+ * free spec.
  */
 class PaymentPipeline
 {
@@ -41,9 +42,11 @@ class PaymentPipeline
     ) {}
 
     /**
-     * Guard a route from its `mpp` middleware arguments. With no arguments the
-     * route's #[RequiresPayment] attribute supplies the terms instead, and its
-     * absence is a misconfiguration: `mpp` was asked for and nothing declared.
+     * Guards a route from the arguments of its `mpp` middleware.
+     *
+     * With no arguments, the #[RequiresPayment] attribute of the route states
+     * the terms. If the attribute is also absent, the route is misconfigured:
+     * the route asked for `mpp` and declared nothing.
      *
      * @param  list<string>  $args
      */
@@ -57,10 +60,11 @@ class PaymentPipeline
     }
 
     /**
-     * Guard a route from an attribute the caller has already read off it. Takes
-     * the attribute rather than the route because reading it costs reflection on
-     * every request, and the automatic enforcer has to read it anyway to decide
-     * whether the route is guarded at all.
+     * Guards a route from an attribute that the caller has already read.
+     *
+     * The method takes the attribute and not the route. To read the attribute
+     * costs reflection on every request, and the automatic enforcer must read it
+     * in any case, to decide whether the route is guarded.
      */
     public function fromAttribute(Request $request, Closure $next, RequiresPayment $attribute): Response
     {
@@ -69,15 +73,17 @@ class PaymentPipeline
 
     private function run(Request $request, Closure $next, PaymentSpec $spec): Response
     {
-        // Price first, so the preconditions (and everything downstream) see the
-        // amount this request will actually be charged rather than the route's
-        // static one. The resolved price only becomes binding once minted into a
-        // signed challenge — settlement always verifies against that challenge.
+        // Price the request first, so that the preconditions and every later
+        // step see the amount that the package will charge, and not the static
+        // amount of the route. The resolved price becomes binding only when the
+        // package mints it into a signed challenge. Settlement always verifies
+        // against that challenge.
         $spec = $this->pricing->apply($request, $spec);
 
-        // Someone has to have named a price by now — the route, a global default,
-        // or a resolver. Asserted before the preconditions run, so a check is
-        // always handed a real amount and never has to consider a null one.
+        // Something must have named a price by this point: the route, a global
+        // default, or a resolver. The pipeline asserts this before the
+        // preconditions run, so every check receives a real amount and never
+        // has to handle a null one.
         if (! $spec->free && ! $spec->isPriced()) {
             throw new UnpriceableRequestException($this->noPriceMessage($request, $spec));
         }
@@ -86,8 +92,9 @@ class PaymentPipeline
             return $response;
         }
 
-        // A resolver may waive the charge outright for this request. No
-        // challenge, no session, no receipt — just the resource.
+        // A resolver can waive the charge for this request. There is then no
+        // challenge, no session and no receipt. The package serves the
+        // resource.
         if ($spec->free) {
             return $next($request);
         }
@@ -96,30 +103,31 @@ class PaymentPipeline
     }
 
     /**
-     * Two different mistakes land here, so the message names which one it is.
+     * Reports one of two different mistakes, and names which one it is.
      *
-     * With no resolvers, the route simply never stated a price. With resolvers,
-     * they all declined — which usually means one of them meant to waive the
-     * charge and returned null for it. Null is "no opinion"; waiving is
-     * `['free' => true]`, and the distinction matters most on exactly this kind
-     * of route, where nothing else supplies a price to fall back on.
+     * With no resolvers, the route never stated a price. With resolvers, every
+     * resolver declined. That usually means that one of them intended to waive
+     * the charge and returned null. Null means "no opinion". To waive the charge
+     * is `['free' => true]`. The difference matters most on this kind of route,
+     * where nothing else supplies a price.
      */
     private function noPriceMessage(Request $request, PaymentSpec $spec): string
     {
         $route = trim($request->method().' '.($request->route()?->uri() ?? $request->path()));
 
-        // Read from the price resolver rather than rebuilding the list, so the
-        // message can only ever name the resolvers that actually ran.
+        // Read the names from the price resolver, and do not rebuild the list.
+        // The message can then name only the resolvers that ran.
         $ran = $this->pricing->namesFor($spec);
 
         $cause = $ran === []
-            ? 'Give it an amount (e.g. mpp:0.50,USD), set a global default (MPP_DEFAULT_AMOUNT / '
-                .'mpp.defaults.amount), reference a price_book key, use a #[RequiresPayment] '
-                .'attribute, or attach a price resolver with `pricing=` and have it return one.'
-            : 'It states no amount, and the price resolver(s) that ran ('.implode(', ', $ran).') '
-                ."all declined by returning null. Return an `['amount' => …]` from one of them, "
-                .'give the route a fallback amount, or — if this request should not be charged at '
-                ."all — return `['free' => true]` rather than null.";
+            ? 'Give the route an amount, for example mpp:0.50,USD. You can also set a global '
+                .'default with MPP_DEFAULT_AMOUNT or mpp.defaults.amount, name a price_book key, '
+                .'add a #[RequiresPayment] attribute, or attach a price resolver with `pricing=` '
+                .'and have it return an amount.'
+            : 'The route states no amount, and every price resolver that ran ('.implode(', ', $ran).') '
+                ."returned null. Return an `['amount' => …]` from one of them, or give the route a "
+                ."fallback amount. If this request is not to be charged, return `['free' => true]` "
+                .'instead of null.';
 
         return "No price for route [{$route}]. {$cause}";
     }
@@ -130,7 +138,7 @@ class PaymentPipeline
 
         if ($attribute === null) {
             throw new InvalidConfigurationException(
-                'The mpp middleware was used without arguments and the action has no #[RequiresPayment] attribute.'
+                'The mpp middleware ran with no arguments, and the action carries no #[RequiresPayment] attribute.'
             );
         }
 
