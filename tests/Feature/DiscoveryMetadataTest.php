@@ -322,7 +322,8 @@ it('keeps the operation when a schema class cannot be read, and says why', funct
     $operation = $this->get('/openapi.json')->assertOk()->json('paths./doc/named.get');
 
     expect($operation['summary'])->toBe('Still here')
-        ->and($operation['responses']['200'])->toBe(['description' => 'Successful response']);
+        ->and($operation['responses']['200']['description'])->toBe('Successful response')
+        ->and($operation['responses']['200'])->not->toHaveKey('content');
 
     Log::shouldHaveReceived('warning')
         ->withArgs(fn (string $message) => str_contains($message, 'App\\Nope'));
@@ -593,8 +594,10 @@ it('describes a response it cannot resolve without claiming a shape', function (
 
     // An empty `schema: {}` would state a shape that nobody described. The
     // response still belongs in the document, because the route returns it.
-    expect($this->get('/openapi.json')->json('paths./doc/named.get.responses.200'))
-        ->toBe(['description' => 'Successful response']);
+    $response = $this->get('/openapi.json')->json('paths./doc/named.get.responses.200');
+
+    expect($response['description'])->toBe('Successful response')
+        ->and($response)->not->toHaveKey('content');
 
     Log::shouldHaveReceived('warning')
         ->withArgs(fn (string $message) => str_contains($message, 'App\\Missing'));
@@ -611,4 +614,130 @@ it('reports a class that states no schema at all', function () {
 
     Log::shouldHaveReceived('warning')
         ->withArgs(fn (string $message) => str_contains($message, 'ProvidesSchema'));
+});
+
+// ── Protocol response headers ───────────────────────────────────────────────
+
+it('declares the headers that the gate sets on a payable success', function () {
+    $headers = $this->get('/openapi.json')->json('paths./doc/clip.get.responses.200.headers');
+
+    // PaymentGate sets Payment-Receipt on a 2xx. Nobody wrote it into the
+    // response map, and nobody should have to.
+    expect($headers)->toHaveKey('Payment-Receipt')
+        ->and($headers['Payment-Receipt']['schema'])->toBe(['type' => 'string']);
+});
+
+it('declares the session header only for a metered route', function () {
+    $doc = $this->get('/openapi.json')->json();
+
+    // The gate issues a session above one grant, and only then does it send
+    // the header.
+    expect($doc['paths']['/doc/metered']['get']['responses']['200']['headers'])
+        ->toHaveKey('Payment-Session')
+        ->and($doc['paths']['/doc/clip']['get']['responses']['200']['headers'])
+        ->not->toHaveKey('Payment-Session');
+});
+
+it('declares the challenge and conflict responses of the protocol', function () {
+    $responses = $this->get('/openapi.json')->json('paths./doc/clip.get.responses');
+
+    expect($responses['402']['headers']['WWW-Authenticate']['schema'])->toBe(['type' => 'string'])
+        ->and($responses['409']['description'])->toBe('Settlement In Progress')
+        ->and($responses['409']['headers']['Retry-After']['schema'])->toBe(['type' => 'string']);
+});
+
+it('keeps a header that the site owner described', function () {
+    $headers = $this->get('/openapi.json')->json('paths./doc/limited.get.responses.200.headers');
+
+    // The package fills what nobody described. It never rewrites a stated
+    // header.
+    expect($headers['Payment-Receipt'])->toBe(['description' => 'Stated by the site owner.'])
+        ->and($headers['X-Rate-Limit']['schema'])->toBe(['type' => 'integer']);
+});
+
+it('adds no protocol response to a free route', function () {
+    config()->set('mpp.discovery.include', ['/free/health']);
+
+    $responses = $this->get('/openapi.json')->json('paths./free/health.get.responses');
+
+    // The route takes no payment, so it sends no challenge, no receipt and no
+    // conflict.
+    expect($responses)->not->toHaveKey('402')
+        ->and($responses)->not->toHaveKey('409')
+        ->and($responses['200'])->not->toHaveKey('headers');
+});
+
+it('takes a schema beside the headers of a response object', function () {
+    $response = $this->get('/openapi.json')->json('paths./doc/limited.get.responses.200');
+
+    // The `schema` key is the short form of `content`. Without it, a response
+    // that states one header has to state a media type as well.
+    expect($response['content']['application/json']['schema']['required'])
+        ->toBe(['url', 'format', 'source'])
+        ->and($response['description'])->toBe('Successful response');
+});
+
+// ── Schemas read from the types of a data object ────────────────────────────
+
+it('reads a response schema from the types of a data object', function () {
+    $schema = $this->get('/openapi.json')
+        ->json('paths./doc/result.get.responses.200.content.application/json.schema');
+
+    expect($schema['type'])->toBe('object')
+        ->and($schema['properties']['url'])->toBe(['type' => 'string'])
+        ->and($schema['properties']['cached'])->toBe(['type' => 'boolean'])
+        ->and($schema['properties']['tags'])->toBe(['type' => 'array'])
+        // A property is required when its type forbids null and the class
+        // gives it no default.
+        ->and($schema['required'])->toBe(['url', 'format', 'source']);
+});
+
+it('states a nullable property as a type union', function () {
+    $properties = $this->get('/openapi.json')
+        ->json('paths./doc/result.get.responses.200.content.application/json.schema.properties');
+
+    // OpenAPI 3.1 is JSON Schema, where null is a member of the type.
+    expect($properties['durationMs'])->toBe(['type' => ['integer', 'null']])
+        ->and($properties['createdAt'])->toBe(['type' => ['string', 'null'], 'format' => 'date-time']);
+});
+
+it('reads the cases of a backed enum', function () {
+    $properties = $this->get('/openapi.json')
+        ->json('paths./doc/result.get.responses.200.content.application/json.schema.properties');
+
+    expect($properties['format'])->toBe(['type' => 'string', 'enum' => ['mp4', 'webm']]);
+});
+
+it('reads a data object inside a data object', function () {
+    $properties = $this->get('/openapi.json')
+        ->json('paths./doc/result.get.responses.200.content.application/json.schema.properties');
+
+    expect($properties['source'])->toBe([
+        'type' => 'object',
+        'properties' => ['id' => ['type' => 'string'], 'width' => ['type' => 'integer']],
+        'required' => ['id', 'width'],
+    ]);
+});
+
+it('leaves out a property whose type states no shape', function () {
+    $properties = $this->get('/openapi.json')
+        ->json('paths./doc/result.get.responses.200.content.application/json.schema.properties');
+
+    // `mixed $extra` carries no shape. The schema sets no
+    // `additionalProperties: false`, so the property is undocumented and not
+    // denied.
+    expect($properties)->not->toHaveKey('extra');
+});
+
+it('refuses to reflect a class that serializes itself', function () {
+    Log::spy();
+
+    $response = $this->get('/openapi.json')->json('paths./doc/serialized.get.responses.200');
+
+    // The class renames its key on the way out, so its properties describe a
+    // different object. A wrong schema is worse than no schema.
+    expect($response)->not->toHaveKey('content');
+
+    Log::shouldHaveReceived('warning')
+        ->withArgs(fn (string $message) => str_contains($message, 'JsonSerializable'));
 });

@@ -76,9 +76,9 @@ class DiscoveryDocument
             // attributes, and autoloads every class that the action type-hints.
             // In an application of any size, the generator discards almost
             // every route.
-            $info = $this->paymentInfoFor($route);
+            $payment = $this->paymentInfoFor($route);
 
-            if ($info === null && ! $this->included($route, $included)) {
+            if ($payment === null && ! $this->included($route, $included)) {
                 continue;
             }
 
@@ -91,9 +91,7 @@ class DiscoveryDocument
                 continue;
             }
 
-            if ($info !== null) {
-                $info = $this->annotate($info, $meta);
-            }
+            $info = $payment === null ? null : $this->annotate($payment['extension'], $meta);
 
             $variants = $this->pathVariants($route, $meta);
 
@@ -119,6 +117,7 @@ class DiscoveryDocument
                         $httpMethod,
                         $body,
                         $responses,
+                        $payment['metered'] ?? false,
                     );
                 }
             }
@@ -153,7 +152,7 @@ class DiscoveryDocument
      * @param  array<string, array<string, mixed>>  $responses
      * @return array<string, mixed>
      */
-    private function operation(?array $info, OperationInfo $meta, array $parameters, string $httpMethod, ?array $body, array $responses): array
+    private function operation(?array $info, OperationInfo $meta, array $parameters, string $httpMethod, ?array $body, array $responses, bool $metered = false): array
     {
         $operation = array_filter([
             'operationId' => $meta->operationId,
@@ -198,8 +197,10 @@ class DiscoveryDocument
 
         if ($info !== null) {
             // The draft requires a 402 on every payable operation, whatever
-            // else the site owner stated.
-            $responses += ['402' => ['description' => 'Payment Required']];
+            // else the site owner stated. The 409 and the headers of the
+            // protocol arrive on the same basis: the gate sends them, and the
+            // site owner neither chooses them nor can remove them.
+            $responses = ProtocolHeaders::apply($responses, $metered);
         }
 
         $operation['responses'] = $responses;
@@ -431,7 +432,15 @@ class DiscoveryDocument
     }
 
     /**
-     * @return array{offers: non-empty-list<array<string, mixed>>}|null null when the route is not payment-gated
+     * Returns the `x-payment-info` extension of a route, and whether the route
+     * is metered.
+     *
+     * The metering stays OUTSIDE the extension. Both branches of the discovery
+     * schema are `additionalProperties: false`, so an extra key would cost the
+     * document its conformance. The generator needs the metering to state the
+     * `Payment-Session` header, and nothing publishes it.
+     *
+     * @return array{extension: array{offers: non-empty-list<array<string, mixed>>}, metered: bool}|null null when the route is not payment-gated
      */
     private function paymentInfoFor(Route $route): ?array
     {
@@ -455,14 +464,18 @@ class DiscoveryDocument
             return null;
         }
 
-        [$amount, $currency, $methods] = $resolved;
+        [$amount, $currency, $methods, $grants] = $resolved;
 
         $offers = [];
         foreach ($methods as $method) {
             $offers[] = $this->offer($method, $amount, $currency);
         }
 
-        return $offers === [] ? null : ['offers' => $offers];
+        if ($offers === []) {
+            return null;
+        }
+
+        return ['extension' => ['offers' => $offers], 'metered' => $grants > 1];
     }
 
     /**
@@ -524,7 +537,7 @@ class DiscoveryDocument
      * leading positional arguments are the amount and the currency.
      *
      * @param  non-empty-list<string>  $args
-     * @return array{?string, string, list<string>}
+     * @return array{?string, string, list<string>, int}
      */
     private function fromMiddlewareArgs(array $args): array
     {
@@ -540,6 +553,7 @@ class DiscoveryDocument
                 method: $options['method'] ?? null,
                 methods: $this->splitList($options['methods'] ?? null)
                     ?: $this->entryMethods($entry),
+                grants: $options['grants'] ?? $entry['grants'] ?? null,
             );
         }
 
@@ -562,11 +576,12 @@ class DiscoveryDocument
             currency: $positional[1] ?? null,
             method: $options['method'] ?? null,
             methods: $this->splitList($options['methods'] ?? null),
+            grants: $options['grants'] ?? null,
         );
     }
 
     /**
-     * @return array{?string, string, list<string>}|null
+     * @return array{?string, string, list<string>, int}|null
      */
     private function attributeArgs(Route $route): ?array
     {
@@ -581,6 +596,7 @@ class DiscoveryDocument
             currency: $attr->currency,
             method: $attr->method,
             methods: $attr->methods,
+            grants: $attr->grants,
         );
     }
 
@@ -592,11 +608,12 @@ class DiscoveryDocument
      * keys.
      *
      * @param  list<string>|null  $methods
-     * @return array{?string, string, list<string>}
+     * @return array{?string, string, list<string>, int}
      */
-    private function resolve(string|float|null $amount, ?string $currency, ?string $method, ?array $methods): array
+    private function resolve(string|float|null $amount, ?string $currency, ?string $method, ?array $methods, int|string|null $grants = null): array
     {
         $amount ??= config('mpp.defaults.amount');
+        $grants ??= config('mpp.defaults.grants');
 
         return [
             // Null means that the route states no price. The resolvers of the
@@ -604,6 +621,9 @@ class DiscoveryDocument
             ($amount === null || $amount === '') ? null : (string) $amount,
             strtoupper($currency ?: (string) (config('mpp.defaults.currency') ?: 'USD')),
             OfferedMethods::resolve($method, $methods),
+            // The gate issues a session only above one grant. The document
+            // states the header of a session on that basis.
+            max(1, (int) ($grants ?? 1)),
         ];
     }
 

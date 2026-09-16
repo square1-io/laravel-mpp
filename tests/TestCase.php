@@ -216,6 +216,19 @@ abstract class TestCase extends OrchestraTestCase
         // A response map whose entries are class names.
         Route::get('/doc/score', [DocumentedController::class, 'score'])->middleware('mpp');
 
+        // A response object that states its shape in the types of its class.
+        Route::get('/doc/result', [DocumentedController::class, 'result'])->middleware('mpp');
+
+        // A response that states headers of its own beside a schema.
+        Route::get('/doc/limited', [DocumentedController::class, 'limited'])->middleware('mpp');
+
+        // A response class that serializes itself under its own key names.
+        Route::get('/doc/serialized', [DocumentedController::class, 'serialized'])->middleware('mpp');
+
+        // A metered route, whose success carries the session header.
+        Route::get('/doc/metered', fn () => response('METERED', 200))
+            ->middleware('mpp:0.50,USD,grants=10,scope=doc.metered');
+
         // ── Free routes ──────────────────────────────────────────────────────
         // Not payment-gated. Listed only when `mpp.discovery.include` names them.
         Route::get('/free/redirect/{slug}', fn () => redirect('/'))->name('free.redirect');

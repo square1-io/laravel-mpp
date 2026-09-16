@@ -4,6 +4,7 @@ namespace Square1\Mpp\Discovery;
 
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Support\Facades\Log;
+use JsonSerializable;
 
 /**
  * Converts what a site owner stated as a request or response schema into the
@@ -17,9 +18,10 @@ use Illuminate\Support\Facades\Log;
  *   - a full OpenAPI `requestBody` or response array, for anything that the
  *     short form cannot express, such as several media types, `$ref`, or
  *     examples;
- *   - a class name. The class is a `FormRequest`, whose `rules()` already
- *     describe the input, or a class of your own that implements
- *     {@see ProvidesSchema}.
+ *   - a class name. The class states its schema through {@see ProvidesSchema},
+ *     or it is a `FormRequest`, whose `rules()` already describe the input, or
+ *     it is a data object whose property types describe its shape. The package
+ *     reads all three, in that order.
  *
  * The class logs a schema that it cannot resolve, and leaves it out. The
  * document stays advisory. An incorrect schema reference costs the operation
@@ -112,11 +114,31 @@ final class SchemaResolver
     }
 
     /**
+     * The keys that mark an entry as a response object and not a JSON Schema.
+     *
+     * `content`, `description`, `headers` and `links` are OpenAPI response
+     * fields. `schema` is the short form that this class adds. None of them is
+     * a JSON Schema keyword, so the test does not confuse the two forms. JSON
+     * Schema spells its own version key `$schema`.
+     */
+    private const RESPONSE_KEYS = ['content', 'description', 'headers', 'links', 'schema'];
+
+    /**
      * Builds one response object.
      *
      * The method takes an entry as written when the entry is already a response
-     * object, that is when it has its own description or its own content. Any
-     * other entry is a JSON Schema, and the method wraps it.
+     * object. Any other entry is a JSON Schema, and the method wraps it.
+     *
+     * A response object can carry `schema` in place of `content`:
+     *
+     *     '200' => [
+     *         'schema' => ClipResult::class,
+     *         'headers' => ['X-Rate-Limit' => ['schema' => ['type' => 'integer']]],
+     *     ]
+     *
+     * Without it, a response that states one header has to state a media type
+     * as well, and the short form is lost for the schema. `schema` takes
+     * everything that the `response` field itself takes, a class name included.
      *
      * @param  array<string, mixed>  $stated
      * @return array<string, mixed>
@@ -130,10 +152,12 @@ final class SchemaResolver
             return ['description' => $fallbackDescription];
         }
 
-        if (isset($stated['content']) || isset($stated['description'])) {
+        if (array_intersect(self::RESPONSE_KEYS, array_keys($stated)) !== []) {
+            $stated = $this->expandSchemaKey($stated);
+
             // The stated description wins. The fallback fills only a response
-            // that named its content and did not describe it. OpenAPI requires
-            // a description on every response object.
+            // that stated its content or its headers and did not describe
+            // itself. OpenAPI requires a description on every response object.
             return $stated + ['description' => $fallbackDescription];
         }
 
@@ -141,6 +165,39 @@ final class SchemaResolver
             'description' => $fallbackDescription,
             'content' => ['application/json' => ['schema' => $stated]],
         ];
+    }
+
+    /**
+     * Rewrites the `schema` short form of a response object as `content`.
+     *
+     * A response that states its own `content` keeps it. The two keys describe
+     * the same thing, and the longer form is the more exact one.
+     *
+     * @param  array<string, mixed>  $stated
+     * @return array<string, mixed>
+     */
+    private function expandSchemaKey(array $stated): array
+    {
+        if (! array_key_exists('schema', $stated)) {
+            return $stated;
+        }
+
+        $schema = $stated['schema'];
+        unset($stated['schema']);
+
+        if (isset($stated['content'])) {
+            return $stated;
+        }
+
+        $resolved = is_string($schema) || is_array($schema)
+            ? $this->resolve($schema, 'response')
+            : null;
+
+        if ($resolved === null) {
+            return $stated;
+        }
+
+        return $stated + ['content' => ['application/json' => ['schema' => $resolved]]];
     }
 
     /**
@@ -271,7 +328,24 @@ final class SchemaResolver
             return ValidationSchema::fromRules((array) (new $class)->rules());
         }
 
-        Log::warning("[mpp] Discovery could not read a schema from '{$class}'. A class states its schema by implementing ".ProvidesSchema::class.', and a FormRequest states it through rules().');
+        // A class that serializes itself chooses its own JSON shape. Its
+        // properties then do not state that shape: the method can rename a
+        // key, drop one, or add one that no property holds. To reflect the
+        // properties would publish a schema for a different object.
+        if (is_subclass_of($class, JsonSerializable::class)) {
+            Log::warning("[mpp] Discovery cannot read a schema from '{$class}': the class implements JsonSerializable, so its properties do not state what it serializes to. Implement ".ProvidesSchema::class.' to state the schema.');
+
+            return null;
+        }
+
+        // Nothing stated a schema, so the package reads the types of the
+        // class. A data object with typed properties describes its own shape,
+        // and ObjectSchema turns that into JSON Schema.
+        if (($reflected = ObjectSchema::fromClass($class)) !== null) {
+            return $reflected;
+        }
+
+        Log::warning("[mpp] Discovery could not read a schema from '{$class}'. A class states its schema by implementing ".ProvidesSchema::class.', a FormRequest states it through rules(), and a data object states it in the types of its public properties.');
 
         return null;
     }

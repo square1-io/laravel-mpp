@@ -580,9 +580,60 @@ final class ScoreSchema implements ProvidesSchema
 #[DiscoveryInfo(response: ['200' => ScoreSchema::class, '404' => NotFound::class])]
 ```
 
-The method is static, so the package reads a schema without building the class. A `FormRequest` cannot implement the interface, because it belongs to Laravel, so the package reads its `rules()` instead. Those are the only two forms a class name takes; the package logs anything else and leaves the schema out.
+The method is static, so the package reads a schema without building the class. A `FormRequest` cannot implement the interface, because it belongs to Laravel, so the package reads its `rules()` instead.
+
+A third form needs no interface at all. When your action already returns a data object, the types of that object state its shape, and the package reads them:
+
+```php
+final class ClipResult
+{
+    public function __construct(
+        public readonly string $url,
+        public readonly ClipFormat $format,      // a backed enum
+        public readonly ClipSource $source,      // another data object
+        public readonly ?int $durationMs = null,
+        public readonly bool $cached = false,
+    ) {}
+}
+
+#[DiscoveryInfo(response: ClipResult::class)]
+```
+
+That publishes an object with all five properties and no schema to maintain. A backed enum becomes an `enum` of its case values. A nested object becomes a nested schema. `?int` becomes `["integer", "null"]`, which is how OpenAPI 3.1 states a nullable type. A `DateTimeInterface` becomes a `date-time` string. A property is required when its type forbids null and the class gives it no default, so `url`, `format` and `source` are required and the other two are not.
+
+The package states nothing that it cannot read. An untyped property, a union type and `mixed` carry no shape, so the schema leaves them out. An `array` property states `type: array` and no `items`, because a PHP array type does not name its member type. The schema never sets `additionalProperties: false`, so a property that the package left out reads as undocumented, and not as denied.
+
+A class that implements `JsonSerializable` chooses its own JSON, so its properties describe a different object from the one it publishes. The package refuses to reflect such a class, logs the reason, and asks for `ProvidesSchema`. A wrong schema is worse than no schema.
 
 The package logs a schema that it cannot resolve, and leaves it out. The document is advisory. An incorrect schema reference costs the operation its schema. It never costs the operation its entry, and it never stops the route from charging.
+
+### Response Headers
+
+`PaymentGate` sets four response headers, and the document declares all four with nothing for you to write:
+
+| Header | Response | When |
+| --- | --- | --- |
+| `Payment-Receipt` | 2xx | after a settlement |
+| `Payment-Session` | 2xx | on a metered route |
+| `WWW-Authenticate` | 402 | always |
+| `Retry-After` | 409 | always |
+
+You do not choose these headers, you cannot change them, and you cannot remove them, so the package does not ask you to declare them. The 409 response arrives with them. The gate returns it when a payment for the same challenge is already settling, and the document now states that too.
+
+To declare a header of your own, state it beside a `schema`:
+
+```php
+#[DiscoveryInfo(response: [
+    '200' => [
+        'schema' => ClipResult::class,
+        'headers' => ['X-Rate-Limit' => ['schema' => ['type' => 'integer']]],
+    ],
+])]
+```
+
+`schema` is the short form of `content: {application/json: {schema: …}}`, and it takes everything that `response` itself takes, a class name included. Without it, a response that states one header would have to state a media type as well.
+
+A header that you describe wins. The package fills only what you left out, so you can describe `Payment-Receipt` in your own words if you want to.
 
 ### What the Router Already Knows
 

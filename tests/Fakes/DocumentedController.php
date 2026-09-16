@@ -84,4 +84,46 @@ class DocumentedController
     {
         return response()->json(['score' => 1]);
     }
+
+    /**
+     * An action whose response object states its shape in its types alone. It
+     * writes no schema.
+     */
+    #[RequiresPayment(amount: '0.50', currency: 'USD')]
+    #[DiscoveryInfo(response: ClipResult::class)]
+    public function result(): JsonResponse
+    {
+        return response()->json(['url' => 'https://example.test/clip.mp4']);
+    }
+
+    /**
+     * An action that states headers of its own beside a schema. It also
+     * describes `Payment-Receipt`, which the package would otherwise describe,
+     * so the precedence between the two is asserted.
+     */
+    #[RequiresPayment(amount: '0.50', currency: 'USD')]
+    #[DiscoveryInfo(response: [
+        '200' => [
+            'schema' => ClipResult::class,
+            'headers' => [
+                'X-Rate-Limit' => ['schema' => ['type' => 'integer']],
+                'Payment-Receipt' => ['description' => 'Stated by the site owner.'],
+            ],
+        ],
+    ])]
+    public function limited(): JsonResponse
+    {
+        return response()->json(['url' => 'https://example.test/clip.mp4']);
+    }
+
+    /**
+     * An action whose response class serializes itself, so its types state
+     * nothing about the JSON.
+     */
+    #[RequiresPayment(amount: '0.50', currency: 'USD')]
+    #[DiscoveryInfo(response: SerializedResult::class)]
+    public function serialized(): JsonResponse
+    {
+        return response()->json(['clip_url' => 'https://example.test/clip.mp4']);
+    }
 }
