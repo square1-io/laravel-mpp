@@ -5,32 +5,34 @@ namespace Square1\Mpp\Discovery;
 use Illuminate\Routing\Route;
 
 /**
- * The names config may refer to a route by.
+ * The names that the config can use for a route.
  *
- * Two config keys name routes — `mpp.discovery.operations` and
- * `mpp.discovery.include` — and they have to agree on what a route is called,
- * or documenting a route and listing it would need two different spellings.
+ * Two config keys name routes: `mpp.discovery.operations` and
+ * `mpp.discovery.include`. They must agree on the name of a route. If they did
+ * not agree, a site owner would need two spellings, one to document a route and
+ * one to list it.
  *
- * A route answers to its name first, because a name is the stable identity: it
- * survives a URL change, which is exactly when a hand-written key would rot
- * silently. Failing that it answers to `"GET /uri"`, and then to its path for
- * the routes — most closure routes — that have no name at all.
+ * A route answers to its name first. A name is the stable identity, because it
+ * survives a change of URL. A hand-written key fails silently at exactly that
+ * point. A route then answers to `"GET /uri"`, and then to its path. Most
+ * closure routes have no name, and the path is all that they have.
  *
- * The path is offered with and without its leading slash. Laravel's own
- * `Route::uri()` has none and everything a developer reads has one, so both
- * spellings are in circulation and neither is wrong enough to reject.
+ * The class returns the path with and without the leading slash. Laravel's own
+ * `Route::uri()` has no leading slash, and the documentation a developer reads
+ * has one. Both spellings are therefore in use, and neither one is wrong.
  */
 final class RouteKeys
 {
     /**
-     * The verbs a route is documented for.
+     * Returns the verbs that the document describes for a route.
      *
-     * `HEAD` and `OPTIONS` are Laravel's and the HTTP stack's, not the
-     * application's, and they are excluded in three places that must agree:
-     * which operations the document emits, which `"VERB /uri"` config keys can
-     * match one, and whether a route's name is unique enough to be its
-     * `operationId`. Disagreement there is a config key that silently stops
-     * matching, or a duplicate `operationId`, which OpenAPI forbids.
+     * `HEAD` and `OPTIONS` belong to Laravel and to the HTTP stack, not to the
+     * application. Three places exclude them, and those places must agree: the
+     * operations that the document emits, the `"VERB /uri"` config keys that
+     * can match an operation, and the test of whether a route name is unique
+     * enough to be an `operationId`. If they disagree, a config key stops
+     * matching without a message, or the document contains a duplicate
+     * `operationId`, which OpenAPI forbids.
      *
      * @return list<string>
      */
@@ -40,9 +42,11 @@ final class RouteKeys
     }
 
     /**
-     * Whether a verb carries a request body — the one question behind both
-     * "do this action's FormRequest rules describe the body" and "does this
-     * operation get the permissive placeholder body".
+     * Reports whether a verb carries a request body.
+     *
+     * This is the one question behind two decisions: whether the FormRequest
+     * rules of an action describe the body, and whether an operation gets the
+     * permissive placeholder body.
      */
     public static function carriesBody(string $verb): bool
     {

@@ -3,16 +3,18 @@
 namespace Square1\Mpp\Protocol;
 
 /**
- * The client's `Accept-Payment` request header: a weighted list of
- * method/intent ranges (wildcards allowed) declaring what the caller can pay
- * with, per the core spec's client payment preferences section.
+ * The `Accept-Payment` request header of the client.
+ *
+ * The header is a weighted list of method and intent ranges, and it can contain
+ * wildcards. It declares what the caller can pay with. The core spec defines it
+ * in its section on client payment preferences.
  *
  *   Accept-Payment: tempo/charge, stripe/charge;q=0.5, solana/*;q=0.3
  *
- * Servers filter their offered challenges to ranges with q>0 and order them by
- * descending q; when nothing matches, the header is ignored and the normal set
- * is returned. The challenge stays authoritative — this only shapes which
- * challenges are offered, never their contents.
+ * A server keeps the offered challenges that match a range with q>0, and orders
+ * them by descending q. When nothing matches, the server ignores the header and
+ * returns its normal set. The challenge stays authoritative. This header changes
+ * only which challenges the server offers, never their contents.
  */
 final class AcceptPayment
 {
@@ -33,7 +35,7 @@ final class AcceptPayment
             $token = array_shift($parts);
 
             if (! preg_match('#^([a-z*][a-z]*|\*)/([A-Za-z0-9-]+|\*)$#', (string) $token, $m)) {
-                continue; // malformed entries are ignored, per spec
+                continue; // the spec states that a server ignores a malformed entry
             }
 
             $q = 1.0;
@@ -55,11 +57,12 @@ final class AcceptPayment
     }
 
     /**
-     * Filter and rank an ordered list of offered method names for a given
-     * intent. Returns the server's own list untouched when the header is
-     * absent, malformed, or matches nothing with q>0.
+     * Filters and ranks an ordered list of offered method names, for one intent.
      *
-     * @param  list<string>  $methods  server-preferred order
+     * The method returns the list of the server without a change when the header
+     * is absent or malformed, or when nothing in it matches with q>0.
+     *
+     * @param  list<string>  $methods  the order that the server prefers
      * @return list<string>
      */
     public function rank(array $methods, string $intent): array
@@ -86,8 +89,10 @@ final class AcceptPayment
     }
 
     /**
-     * The q value of the most specific matching range, or null when no range
-     * matches (distinct from an explicit q=0 exclusion).
+     * Returns the q value of the matching range that is most specific.
+     *
+     * The method returns null when no range matches. That result is different
+     * from an explicit q=0, which excludes the method.
      */
     private function quality(string $method, string $intent): ?float
     {

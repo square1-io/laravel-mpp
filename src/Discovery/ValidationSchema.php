@@ -3,30 +3,37 @@
 namespace Square1\Mpp\Discovery;
 
 /**
- * Translates a Laravel validation rule set into the JSON Schema the discovery
- * draft asks each payable operation to publish as its input schema.
+ * Translates a Laravel validation rule set into a JSON Schema.
  *
- * The draft says operations SHOULD declare an input schema, and that clients
- * and registries MAY flag one that does not as "schema-missing". An application
- * that validates with a `FormRequest` has already written that schema — in
- * Laravel's words rather than JSON Schema's — so the package reads it there
- * instead of asking for it twice. A rule set and a schema that are maintained
- * separately drift, and the published one is the one nobody runs.
+ * The discovery draft asks each payable operation to publish that schema as its
+ * input schema. The draft states that an operation SHOULD declare an input
+ * schema, and that clients and registries MAY mark an operation without one as
+ * "schema-missing".
  *
- * The translation is deliberately partial. It covers the rules that describe the
- * SHAPE of a request — types, requiredness, bounds, enumerations, nesting — and
- * ignores the rest. `exists`, `unique` and friends are database facts, not shape,
- * and a rule this class does not recognise simply contributes nothing rather than
- * producing a schema that claims more than Laravel enforces. An agent reading the
- * result learns what to send; it does not learn every reason a request may be
- * rejected, and the 422 remains authoritative in the same way the 402 does.
+ * An application that validates with a `FormRequest` has already written the
+ * schema, in the terms of Laravel and not of JSON Schema. The package therefore
+ * reads it there and does not ask for it a second time. A rule set and a schema
+ * that a site owner maintains separately become different, and the application
+ * runs only the rule set.
+ *
+ * The translation is deliberately partial. It covers the rules that describe
+ * the SHAPE of a request: types, requiredness, bounds, enumerations and
+ * nesting. It ignores the other rules. `exists` and `unique` state database
+ * facts, not shape. A rule that this class does not recognise contributes
+ * nothing. The class does not produce a schema that claims more than Laravel
+ * enforces.
+ *
+ * An agent that reads the result learns what to send. It does not learn every
+ * reason for which the application can reject a request. The 422 response stays
+ * authoritative, in the same way as the 402 response.
  */
 final class ValidationSchema
 {
     /**
-     * Laravel type rules and the JSON Schema type each implies. Order matters
-     * for the bound rules below: `min:3` means a length on a string, a value on
-     * a number, and a count on an array.
+     * The Laravel type rules, and the JSON Schema type that each one implies.
+     *
+     * The type also settles the bound rules below. `min:3` is a length on a
+     * string, a value on a number, and a count on an array.
      */
     private const TYPES = [
         'string' => 'string',
@@ -51,7 +58,7 @@ final class ValidationSchema
         'json' => 'string',
     ];
 
-    /** Rules that additionally pin a `format` on a string. */
+    /** The rules that also set a `format` on a string. */
     private const FORMATS = [
         'email' => 'email',
         'url' => 'uri',
@@ -64,8 +71,10 @@ final class ValidationSchema
     ];
 
     /**
-     * Convert a `FormRequest::rules()` return value into a JSON Schema object,
-     * or null when nothing in it described a shape.
+     * Converts the return value of `FormRequest::rules()` into a JSON Schema
+     * object.
+     *
+     * The method returns null when no rule in the set described a shape.
      *
      * @param  array<string, mixed>  $rules
      * @return array<string, mixed>|null
@@ -88,10 +97,12 @@ final class ValidationSchema
     }
 
     /**
-     * Flatten one field's rules to a list of strings. Rule objects (`Rule::in()`,
-     * `Password::min()`, an enum rule) stringify when they can and are dropped
-     * when they cannot — a rule the package cannot read describes nothing, which
-     * is the honest outcome.
+     * Flattens the rules of one field to a list of strings.
+     *
+     * A rule object, such as `Rule::in()`, `Password::min()` or an enum rule,
+     * becomes a string when it can. The method drops a rule object that cannot
+     * become a string. A rule that the package cannot read describes nothing,
+     * and the method states nothing about it.
      *
      * @return list<string>
      */
@@ -119,9 +130,11 @@ final class ValidationSchema
     }
 
     /**
-     * Place one field's rules in the tree at its dotted path. A `*` segment is
-     * an array's items (`tags.*`), anything else a nested object's property
-     * (`meta.name`); a path can mix them (`items.*.sku`).
+     * Places the rules of one field in the tree, at its dotted path.
+     *
+     * A `*` segment is the items of an array, as in `tags.*`. Any other segment
+     * is a property of a nested object, as in `meta.name`. A path can contain
+     * both forms, as in `items.*.sku`.
      *
      * @param  array<string, mixed>  $tree
      * @param  list<string>  $path
@@ -142,8 +155,9 @@ final class ValidationSchema
             return;
         }
 
-        // A field with children is an object (or an array, when the next
-        // segment is `*`) whether or not it carries a rule saying so.
+        // A field that has children is an object, or an array when the next
+        // segment is `*`. This is true whether or not the field carries a rule
+        // that states the type.
         self::plant($node['children'], $path, $rules);
     }
 
@@ -187,8 +201,8 @@ final class ValidationSchema
         $children = $node['children'];
         $items = $children['*'] ?? null;
 
-        // The children decide the type when the rules do not: a `*` child is an
-        // array's items, any other child a property of an object.
+        // The children settle the type when the rules do not. A `*` child is
+        // the items of an array. Any other child is a property of an object.
         $type = self::lookup($rules, self::TYPES) ?? match (true) {
             $items !== null => 'array',
             $children !== [] => 'object',
@@ -229,12 +243,16 @@ final class ValidationSchema
     }
 
     /**
-     * Whether a field must be present. `required` on the field says so, and so
-     * does `required` on anything nested inside it: a rule set that requires
-     * `watermark.text` rejects a request that omits `watermark` altogether, so
-     * a schema that called `watermark` optional would accept bodies Laravel
-     * does not. An item rule (`tags.*`) is not such a case — it constrains the
-     * items of an array that is there, and says nothing about whether it is.
+     * Reports whether a field must be present.
+     *
+     * `required` on the field states this. `required` on a field nested inside
+     * it states this too. A rule set that requires `watermark.text` rejects a
+     * request that omits `watermark`. A schema that marked `watermark` optional
+     * would therefore accept a body that Laravel rejects.
+     *
+     * An item rule such as `tags.*` is different. It constrains the items of an
+     * array that is present, and states nothing about whether the array must be
+     * present.
      *
      * @param  array{rules: list<string>, children: array<string, mixed>}  $node
      */
@@ -254,11 +272,11 @@ final class ValidationSchema
     }
 
     /**
-     * The first rule that appears in one of the tables above wins. That
-     * precedence is load-bearing rather than incidental: `date` types a field
-     * `string` and formats it `date-time`, and a rule set naming two types is
-     * already contradictory, so the first is as good an answer as any and a
-     * stable one.
+     * Returns the value for the first rule that appears in the given table.
+     *
+     * The precedence is deliberate. `date` types a field `string` and formats
+     * it `date-time`. A rule set that names two types already contradicts
+     * itself, so the first type is a correct answer and a stable one.
      *
      * @param  list<string>  $rules
      * @param  array<string, string>  $table
@@ -277,10 +295,12 @@ final class ValidationSchema
     }
 
     /**
-     * `min`, `max`, `between` and `size` all mean something different per type:
-     * a length on a string, a value on a number, a count on an array. Without a
-     * type rule there is nothing to attach them to, so they are dropped rather
-     * than guessed at.
+     * Returns the bounds that the rules state.
+     *
+     * `min`, `max`, `between` and `size` each mean something different for each
+     * type: a length on a string, a value on a number, and a count on an array.
+     * Without a type rule there is nothing to apply them to. The method
+     * therefore drops them and does not infer a type.
      *
      * @param  list<string>  $rules
      * @return array<string, int|float>
@@ -338,8 +358,8 @@ final class ValidationSchema
                 continue;
             }
 
-            // `in:"a,b",c` quotes values containing commas, exactly as
-            // Rule::in() emits them.
+            // `in:"a,b",c` puts quotation marks around a value that contains a
+            // comma. Rule::in() writes the values in that form.
             $values = array_map(fn (string $v) => trim(trim($v), '"'), self::args($rule));
             $values = array_values(array_filter($values, fn (string $v) => $v !== ''));
 
@@ -361,11 +381,11 @@ final class ValidationSchema
                 continue;
             }
 
-            // The rule carries a PCRE literal (`/^[a-z]+$/i`). JSON Schema
-            // patterns are ECMA-262 source with no delimiters and no flags, so
-            // only a plain, unflagged expression survives the trip; anything
-            // else would publish a pattern that means something different from
-            // the one Laravel enforces.
+            // The rule carries a PCRE literal such as `/^[a-z]+$/i`. A JSON
+            // Schema pattern is ECMA-262 source, with no delimiters and no
+            // flags. Only an expression without flags can make the conversion.
+            // Any other expression would publish a pattern with a different
+            // meaning from the pattern that Laravel enforces.
             $pcre = substr($rule, strlen('regex:'));
             $delimiter = $pcre[0] ?? '';
             $end = strrpos($pcre, $delimiter);

@@ -8,44 +8,51 @@ use Square1\Mpp\Exceptions\InvalidConfigurationException;
 use Square1\Mpp\Payment\Concerns\ResolvesNamedCallables;
 
 /**
- * Applies a route's named price resolvers to its resolved PaymentSpec, so the
- * price can depend on the request — a plan tier, a region, the size of the thing
- * being asked for — instead of being fixed in the route definition.
+ * Applies the named price resolvers of a route to its resolved PaymentSpec.
+ *
+ * The price can then depend on the request, for example on a plan tier, a
+ * region, or the size of the resource. The route definition does not fix it.
  *
  * Each name resolves from `mpp.pricing.resolvers` to a [Class::class, 'method']
- * pair (container-resolved, so config:cache-safe) called with the Request and
- * the spec as it stands. It returns an array of overrides (`amount`, `currency`,
- * `grants`, `scope`, or `free => true`) or null to leave the price alone. Global
- * resolvers run first, then the route's own, in declared order and
- * de-duplicated; each sees the result of the ones before it. An unknown name
- * throws, so a typo can never silently fall back to the static price.
+ * pair. The container resolves the pair, so the list survives `config:cache`.
+ * The package calls the pair with the Request and the current spec. The pair
+ * returns an array of overrides (`amount`, `currency`, `grants`, `scope`, or
+ * `free => true`), or null to leave the price as it is.
  *
- * The price is only advisory until it is minted: the amount a buyer is charged
- * is the one bound into the signed challenge, and settlement verifies against
- * that challenge, never against a freshly-resolved spec. A resolver that returns
- * a different answer between the 402 and the paid retry therefore cannot change
- * what the buyer was quoted.
+ * The global resolvers run first, and then the resolvers of the route. Both run
+ * in the declared order, and the package removes duplicates. Each resolver sees
+ * the result of the resolvers before it. An unknown name throws, so a typo
+ * cannot fall back to the static price without a message.
+ *
+ * The price is advisory until the package mints it. The amount that a buyer
+ * pays is the amount in the signed challenge, and settlement verifies against
+ * that challenge and never against a new spec. A resolver that returns a
+ * different answer between the 402 and the paid retry therefore cannot change
+ * the amount that the package quoted to the buyer.
  */
 class PriceResolver
 {
     use ResolvesNamedCallables;
 
     /**
-     * Route scopes already warned about this process. Bounded by the number of
-     * gated routes: an entry is only ever recorded for a scope a resolver left
-     * as the route declared it (see warnOnUnscopedMeteredPrice).
+     * The route scopes that this process has already warned about.
+     *
+     * The number of gated routes bounds this list. The class records an entry
+     * only for a scope that every resolver left as the route declared it. See
+     * warnOnUnscopedMeteredPrice.
      *
      * @var array<string, bool>
      */
     private array $warned = [];
 
     /**
-     * The resolvers that apply to this spec, in the order they run: the global
-     * list first, then the route's own, de-duplicated.
+     * Returns the resolvers that apply to this spec, in the order that they
+     * run: the global list first, then the list of the route, without
+     * duplicates.
      *
-     * Public because the pipeline names them when it has to report that nothing
-     * priced a request. That message has to describe what actually ran, so both
-     * callers read the set from here rather than each rebuilding it.
+     * This method is public because the pipeline names these resolvers when it
+     * reports that nothing priced a request. That message must describe what
+     * ran, so both callers read the set here instead of building it again.
      *
      * @return list<string>
      */
@@ -89,18 +96,23 @@ class PriceResolver
     }
 
     /**
-     * Sessions are scope-bound, not payer-bound: `consume()` checks only that the
-     * session was issued for this scope. So on a metered route whose price varies
-     * by request, a session bought at the cheap tier is spendable by any bearer
-     * of its id — including one who should have paid more. Varying the `scope`
-     * alongside the price keeps the tiers in separate credit pools.
+     * Warns when a metered route varies its price but not its scope.
      *
-     * Warned once per scope per process rather than enforced: sharing a scope
-     * across tiers is a legitimate (if unusual) choice, and this is not a
-     * misconfiguration that makes the 402 itself wrong. The flag is keyed on the
-     * ROUTE's scope, which is why `$warned` stays bounded by the number of gated
-     * routes: a resolver that varies the scope per request — the thing this
-     * warning asks for — doesn't reach the flag at all.
+     * A session is bound to a scope and not to a payer. `consume()` checks only
+     * that the server issued the session for this scope. On a metered route
+     * whose price varies per request, any holder of the session id can therefore
+     * spend a session that someone bought at the cheap tier. That includes a
+     * holder who owes more. To vary the `scope` with the price keeps the tiers
+     * in separate credit pools.
+     *
+     * The class warns once per scope per process, and does not enforce the rule.
+     * To share one scope across tiers is a valid choice, although an unusual
+     * one, and it does not make the 402 itself incorrect.
+     *
+     * The flag uses the scope of the ROUTE as its key. The number of gated
+     * routes therefore bounds `$warned`. A resolver that varies the scope per
+     * request is what this warning asks for, and such a resolver never reaches
+     * the flag.
      */
     private function warnOnUnscopedMeteredPrice(PaymentSpec $original, PaymentSpec $final): void
     {

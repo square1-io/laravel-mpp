@@ -8,7 +8,7 @@ use Square1\Mpp\Payment\PaymentPipeline;
 use Symfony\Component\HttpFoundation\Response;
 
 /**
- * Guards a route behind an MPP payment. Aliased as `mpp`.
+ * Guards a route behind an MPP payment. The package aliases it as `mpp`.
  *
  *   ->middleware('mpp:0.50,USD')                               // once-off
  *   ->middleware('mpp:5.00,USD,grants=10,scope=report.basic')  // metered bundle
@@ -16,9 +16,9 @@ use Symfony\Component\HttpFoundation\Response;
  *   ->middleware('mpp:5.00,USD,pricing=tiered')                // price per request
  *   ->middleware('mpp')   + #[RequiresPayment(...)] on the action
  *
- * Everything the arguments mean, and everything that happens once they are
- * understood, belongs to the PaymentPipeline — shared with the automatic
- * attribute enforcer so neither route style can drift from the other.
+ * The PaymentPipeline owns the meaning of the arguments, and every step after
+ * that. The automatic attribute enforcer shares the pipeline, so neither route
+ * style can behave differently from the other.
  */
 class RequirePayment
 {

@@ -9,22 +9,29 @@ use Square1\Mpp\Support\Base64Url;
 use Square1\Mpp\Support\Jcs;
 
 /**
- * A settlement receipt, rendered into the `Payment-Receipt` response header.
+ * A settlement receipt, which the package renders into the `Payment-Receipt`
+ * response header.
  *
- * The receipt is rail-neutral: it carries the settling `method` and a canonical
- * `ref` (the rail's settlement reference — a Stripe PaymentIntent id, an on-chain
- * tx hash, etc.), for every method alike.
+ * The receipt is independent of the rail. It carries the `method` that settled
+ * the payment and a canonical `ref`, which is the settlement reference of the
+ * rail. That reference is a Stripe PaymentIntent id, an on-chain transaction
+ * hash, or the equivalent for another rail. Every method uses the same two
+ * fields.
  *
- * The header is exactly the spec's receipt, {status, method, timestamp,
- * reference}, with no package additions. In particular it carries no amount or
- * currency. Neither the core draft nor the stripe / tempo charge drafts define
- * them on a receipt, and the payer already holds the exact terms in the
- * challenge they echoed. Rendering them here also forced a units choice
- * (decimal for ISO currencies, base units for tokens) that the rest of the wire
- * format never makes, so the same header disagreed with itself across rails.
- * The settlement `reference` is the pointer to the rail's own record of what
- * was charged. `challengeId` is kept on the object for the server's own use
- * (logging, correlation) but is not emitted.
+ * The header is exactly the receipt of the spec, {status, method, timestamp,
+ * reference}. The package adds nothing. In particular, the header carries no
+ * amount and no currency. The core draft does not define them on a receipt, and
+ * neither do the stripe and tempo charge drafts. The payer also already holds
+ * the exact terms, in the challenge that it echoed.
+ *
+ * To render an amount here would force a choice of units, which would be decimal
+ * for an ISO currency and base units for a token. The rest of the wire format
+ * never makes that choice, so the same header stated different units on
+ * different rails. The settlement `reference` points to the record that the rail
+ * itself holds of the amount charged.
+ *
+ * The object keeps `challengeId` for the server, for logging and correlation.
+ * The package does not emit it.
  */
 class Receipt
 {
@@ -49,10 +56,12 @@ class Receipt
 
     public function header(): string
     {
-        // Spec receipt: base64url(JCS JSON), status always "success" (receipts
-        // are only issued on successful settlement), `reference` carries the
-        // rail's settlement id. Nothing else: the core draft reserves extra
-        // receipt fields for method specifications, not servers.
+        // This is the receipt of the spec: base64url(JCS JSON). The status is
+        // always "success", because the server issues a receipt only after a
+        // successful settlement. `reference` carries the settlement id of the
+        // rail. The receipt carries nothing else. The core draft reserves any
+        // further receipt field for a method specification, and not for a
+        // server.
         return Base64Url::encode(Jcs::encode([
             'status' => 'success',
             'method' => $this->method,

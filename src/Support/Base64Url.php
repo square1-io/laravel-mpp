@@ -3,8 +3,10 @@
 namespace Square1\Mpp\Support;
 
 /**
- * Base64url without padding, per RFC 4648 Section 5 — the encoding MPP uses for
- * the challenge `request`/`opaque` parameters, the credential, and the receipt.
+ * Base64url without padding, as RFC 4648 Section 5 defines it.
+ *
+ * MPP uses this encoding for the `request` and `opaque` parameters of a
+ * challenge, for the credential, and for the receipt.
  */
 final class Base64Url
 {

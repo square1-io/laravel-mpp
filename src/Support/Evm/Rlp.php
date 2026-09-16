@@ -5,22 +5,27 @@ namespace Square1\Mpp\Support\Evm;
 use InvalidArgumentException;
 
 /**
- * Minimal RLP (Recursive Length Prefix) decoder for raw EVM transaction bytes.
+ * The smallest RLP (Recursive Length Prefix) decoder for raw EVM transaction
+ * bytes.
  *
- * We only ever DECODE: the Tempo settlement path re-broadcasts the exact signed
- * bytes the client presented, so it never needs to re-encode. Decoding lets us
- * read the transaction's `calls[]` (and thus the token transfer recipient,
- * amount and memo) to validate them against the challenge before broadcasting.
+ * The package only DECODES. The Tempo settlement path broadcasts the exact
+ * signed bytes that the client presented, so it never encodes anything.
  *
- * A decoded value is either a string (a byte string, returned as a 0x-prefixed
- * hex string) or a nested list (array) of such values — mirroring viem/ox's
- * `Rlp.toHex` shape that the mppx reference implementation consumes.
+ * Decoding lets the package read the `calls[]` of the transaction, and therefore
+ * the recipient, the amount and the memo of the token transfer. The package
+ * validates those values against the challenge before it broadcasts.
+ *
+ * A decoded value is either a string or a nested list. A string is a byte
+ * string, which the decoder returns as a hex string with a 0x prefix. A nested
+ * list is an array of such values. This is the shape of `Rlp.toHex` in viem and
+ * ox, which the mppx reference implementation reads.
  */
 final class Rlp
 {
     /**
-     * Decode RLP bytes (given as a 0x-hex string or raw binary) into a nested
-     * structure of 0x-hex strings and arrays.
+     * Decodes RLP bytes into a nested structure of 0x-hex strings and arrays.
+     *
+     * The input is a 0x-hex string or raw binary.
      *
      * @return string|array<int, mixed>
      */
@@ -48,14 +53,14 @@ final class Rlp
 
         $prefix = ord($bytes[$offset]);
 
-        // Single byte [0x00, 0x7f]: it is its own encoding.
+        // A single byte in [0x00, 0x7f] is its own encoding.
         if ($prefix <= 0x7F) {
             $offset++;
 
             return '0x'.bin2hex($bytes[$offset - 1]);
         }
 
-        // Short string [0x80, 0xb7]: 0-55 bytes.
+        // A short string, in [0x80, 0xb7], holds 0 to 55 bytes.
         if ($prefix <= 0xB7) {
             $len = $prefix - 0x80;
             $offset++;
@@ -64,7 +69,8 @@ final class Rlp
             return '0x'.bin2hex($str);
         }
 
-        // Long string [0xb8, 0xbf]: length-of-length follows.
+        // A long string, in [0xb8, 0xbf], carries the length of its length
+        // first.
         if ($prefix <= 0xBF) {
             $lenOfLen = $prefix - 0xB7;
             $offset++;
@@ -74,7 +80,7 @@ final class Rlp
             return '0x'.bin2hex($str);
         }
 
-        // Short list [0xc0, 0xf7]: 0-55 bytes of payload.
+        // A short list, in [0xc0, 0xf7], holds 0 to 55 bytes of payload.
         if ($prefix <= 0xF7) {
             $len = $prefix - 0xC0;
             $offset++;
@@ -82,7 +88,7 @@ final class Rlp
             return self::decodeList($bytes, $offset, $len);
         }
 
-        // Long list [0xf8, 0xff].
+        // A long list, in [0xf8, 0xff].
         $lenOfLen = $prefix - 0xF7;
         $offset++;
         $len = self::readLength($bytes, $offset, $lenOfLen);

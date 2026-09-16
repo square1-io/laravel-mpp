@@ -9,13 +9,18 @@ use Square1\Mpp\Metering\Session;
 use Square1\Mpp\Metering\SessionStore;
 
 /**
- * Cache-backed session store. The remaining-credit count lives in its own key so
- * it can be decremented atomically (e.g. Redis DECR). To avoid overselling under
- * concurrency we decrement first and, if the result went negative, give the
- * credit back and reject — so exactly `remaining` callers ever succeed.
+ * A session store that uses the cache.
  *
- * Uses your application's default cache store unless configured otherwise, so a
- * Redis-backed app keeps sessions in Redis with no extra setup.
+ * The count of remaining credits lives in its own key, so that the store can
+ * decrement it atomically, for example with Redis DECR.
+ *
+ * To prevent an oversell under concurrency, the store decrements the count
+ * first. When the result is below zero, it returns the credit and rejects the
+ * request. Exactly `remaining` callers therefore succeed.
+ *
+ * The store uses the default cache store of the application, unless the config
+ * names another one. An application that uses Redis therefore keeps its sessions
+ * in Redis, with no further setup.
  */
 class CacheSessionStore implements SessionStore
 {

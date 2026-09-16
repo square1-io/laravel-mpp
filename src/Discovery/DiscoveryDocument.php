@@ -14,38 +14,43 @@ use Square1\Mpp\Protocol\ChallengeFactory;
 /**
  * Builds the OpenAPI 3.1 discovery document served at /openapi.json.
  *
- * MPP clients use discovery to find payable endpoints before making a
- * request; the document is advisory only — the runtime 402 challenge stays
- * authoritative. Because of that, nothing PRICED here is hand-maintained: the
- * generator walks the router for routes gated by the `mpp` middleware or the
- * #[RequiresPayment] attribute and derives each `x-payment-info` from the same
- * config and request builders that mint the live challenge, so the two can
- * never disagree on amount, currency or offered methods.
+ * MPP clients read the document to find payable endpoints before they send a
+ * request. The document is advisory. The runtime 402 challenge is
+ * authoritative.
  *
- * Price precedence mirrors Payment\SpecResolver — route argument, then
- * price_book entry, then `mpp.defaults` — and the offered method set mirrors
- * its resolveOfferedMethods(); the two are read together. SpecResolver itself
- * needs a Request (for the route-derived scope, which discovery does not
- * advertise), so the precedence is replicated here off the same config keys.
+ * No price in the document is hand-maintained. The generator reads the router
+ * for routes that the `mpp` middleware or the #[RequiresPayment] attribute
+ * gates. It derives each `x-payment-info` from the config and the request
+ * builders that mint the live challenge. The document and the challenge
+ * therefore cannot disagree on amount, currency or offered methods.
  *
- * Routes with resolver-driven (dynamic) pricing advertise their offered
- * methods with an explicit `amount: null` — every x-payment-info field is
- * optional in the discovery schema, but the key is present so a client can
- * tell "priced later" from "not stated", and the 402 carries the real price.
+ * Price precedence is the same as in Payment\SpecResolver: the route argument
+ * first, then the price_book entry, then `mpp.defaults`. The offered method set
+ * is the same as its resolveOfferedMethods(). Read the two classes together.
+ * SpecResolver needs a Request to derive the scope, and discovery does not
+ * advertise the scope. This class therefore repeats the precedence and reads
+ * the same config keys.
  *
- * Everything the draft asks for that a price cannot supply — what the operation
- * does, what to send it, what comes back, who runs the service — is stated by
- * the site owner or read off the application; OperationInfoResolver and
- * ServiceInfo settle where each field comes from.
+ * A route with resolver-driven (dynamic) pricing advertises its offered methods
+ * with an explicit `amount: null`. Every x-payment-info field is optional in
+ * the discovery schema. This key is present so that a client can tell "priced
+ * later" from "not stated". The 402 carries the real price.
+ *
+ * The draft also asks for data that a price cannot supply: what the operation
+ * does, what to send to it, what it returns, and who operates the service. The
+ * site owner states this data, or the package reads it from the application.
+ * OperationInfoResolver and ServiceInfo define where each field comes from.
  */
 class DiscoveryDocument
 {
     /**
-     * Stand-in amount used to derive a rail's currency identity for a route that
-     * states no price. Each builder owns its currency (a token address on Tempo,
-     * an ISO code on fiat) and none of it depends on the amount, so an unpriced
-     * offer can still advertise the currency the live 402 will carry. The probe
-     * itself never reaches the document.
+     * A stand-in amount that lets the generator find the currency of a rail for
+     * a route that states no price.
+     *
+     * Each builder owns its currency: a token address on Tempo, an ISO code on
+     * fiat. The currency does not depend on the amount. An unpriced offer can
+     * therefore advertise the currency that the live 402 will carry. This probe
+     * amount never reaches the document.
      */
     private const PROBE_AMOUNT = '1';
 
@@ -65,11 +70,12 @@ class DiscoveryDocument
         $included = (array) config('mpp.discovery.include', []);
 
         foreach ($this->router->getRoutes() as $route) {
-            // Cheapest question first, and asked of every route in the
-            // application: is this one listed at all? Describing a route means
-            // reflecting over its action, instantiating its attributes and
-            // autoloading every class it type-hints, and in an app of any size
-            // almost every route is about to be discarded.
+            // Ask the cheapest question first, for every route in the
+            // application: does the document list this route? To describe a
+            // route, the package reflects over its action, builds its
+            // attributes, and autoloads every class that the action type-hints.
+            // In an application of any size, the generator discards almost
+            // every route.
             $info = $this->paymentInfoFor($route);
 
             if ($info === null && ! $this->included($route, $included)) {
@@ -79,9 +85,9 @@ class DiscoveryDocument
             $meta = $this->operations->for($route);
 
             if ($meta->hidden === true) {
-                // Payable, deliberately unlisted. A site owner may want an
-                // endpoint chargeable without advertising it to every crawler;
-                // the 402 is unaffected.
+                // The route is payable but deliberately unlisted. A site owner
+                // can charge for an endpoint and not advertise it to every
+                // crawler. The 402 does not change.
                 continue;
             }
 
@@ -91,15 +97,16 @@ class DiscoveryDocument
 
             $variants = $this->pathVariants($route, $meta);
 
-            // One route serving several paths (an optional parameter is really
-            // two operations) cannot reuse one operationId, which OpenAPI
-            // requires to be unique across the document.
+            // One route can serve several paths, because an optional parameter
+            // is two operations. Those operations cannot share one operationId.
+            // OpenAPI requires the operationId to be unique in the document.
             if (count($variants) > 1) {
                 $meta = $meta->withOperationId(null);
             }
 
-            // Both are fixed for the route, and `operation()` below is called
-            // once per path variant per verb.
+            // The body and the responses are the same for every operation of
+            // this route. `operation()` below runs once for each path variant
+            // and each verb.
             $body = $this->schemas->requestBody($meta->request);
             $responses = $this->schemas->responses($meta->response);
 
@@ -133,10 +140,12 @@ class DiscoveryDocument
     }
 
     /**
-     * One operation object. A null `$info` is a free route that config asked to
-     * be listed: documented like any other, but with no payment extension and
-     * no 402, because it is not payable and saying otherwise would be a lie a
-     * client acts on.
+     * Builds one operation object.
+     *
+     * A null `$info` is a free route that the config asked the package to list.
+     * The package documents it in the same way as any other route. It adds no
+     * payment extension and no 402, because the route is not payable and a
+     * client would act on a 402 that it will never receive.
      *
      * @param  array{offers: non-empty-list<array<string, mixed>>}|null  $info
      * @param  list<array<string, mixed>>  $parameters
@@ -168,28 +177,28 @@ class DiscoveryDocument
         }
 
         if ($body !== null) {
-            // A stated body on a GET is unusual but legal, and a site owner who
-            // wrote one meant it.
+            // A stated body on a GET request is unusual but legal. A site
+            // owner who writes one intends it.
             $operation['requestBody'] = $body;
         } elseif ($info !== null && RouteKeys::carriesBody($httpMethod)) {
-            // Discovery consumers expect a body-carrying PAYABLE operation to
-            // declare a requestBody, so a permissive JSON object stands in when
-            // the body is app-defined and undeclared. A free route gets no such
-            // placeholder: `{"type": "object"}` says nothing, and the reason to
-            // say it anyway does not apply.
+            // Discovery clients expect a payable operation that carries a body
+            // to declare a requestBody. A permissive JSON object stands in when
+            // the application defines the body but does not declare it. A free
+            // route gets no placeholder. `{"type": "object"}` states nothing,
+            // and the reason to state it does not apply to a free route.
             $operation['requestBody'] = ['content' => ['application/json' => ['schema' => ['type' => 'object']]]];
         }
 
         if ($responses === []) {
-            // Only when the operation described no response at all. A route that
-            // named its own — a 307 redirect, a 404 — does not also get a 200 it
-            // never returns.
+            // This applies only when the operation described no response at
+            // all. A route that named its own responses, such as a 307 redirect
+            // and a 404, does not also get a 200 that it never returns.
             $responses = ['200' => ['description' => 'Successful response']];
         }
 
         if ($info !== null) {
-            // Required by the draft on every payable operation, whatever else
-            // the site owner said.
+            // The draft requires a 402 on every payable operation, whatever
+            // else the site owner stated.
             $responses += ['402' => ['description' => 'Payment Required']];
         }
 
@@ -199,17 +208,20 @@ class DiscoveryDocument
     }
 
     /**
-     * Whether a route that charges nothing should nonetheless be listed.
+     * Reports whether the document lists a route that charges nothing.
      *
      * The document describes an API surface, and a paid API usually has free
-     * parts — a redirect, a status endpoint, the free tier of a paid one — that
-     * an agent planning a call needs to know about and would otherwise have to
-     * discover by paying for something. `mpp.discovery.include` names them,
-     * matched against the same keys `operations` uses, with `*` wildcards.
+     * parts: a redirect, a status endpoint, or the free tier of a paid
+     * endpoint. An agent that plans a call needs to know about them. Without
+     * this list, the agent must pay for a request to find them.
      *
-     * Empty by default, and deliberately opt-in per route: a broad pattern
-     * publishes your route table to an unauthenticated endpoint that registries
-     * crawl, which is a decision about disclosure rather than a convenience.
+     * `mpp.discovery.include` names the free routes. The package matches the
+     * patterns against the same keys as `operations`, and accepts `*`
+     * wildcards.
+     *
+     * The list is empty by default, and each route must opt in. A broad pattern
+     * publishes your route table on an unauthenticated endpoint that registries
+     * crawl. That is a decision about disclosure, not a convenience.
      *
      * @param  list<string>  $patterns
      */
@@ -229,14 +241,15 @@ class DiscoveryDocument
     }
 
     /**
-     * The OpenAPI paths one route serves, each with its own path parameters.
+     * Returns the OpenAPI paths that one route serves, each with its own path
+     * parameters.
      *
-     * A Laravel route is one pattern; an OpenAPI path is one template, and a
-     * path parameter in it is always required. An optional Laravel parameter —
-     * `/report/{year?}` — is therefore two OpenAPI paths rather than one
-     * optional parameter, and emitting `{year?}` verbatim (as this generator
-     * once did) publishes a template whose parameter is literally named
-     * "year?" and is declared nowhere.
+     * A Laravel route is one pattern. An OpenAPI path is one template, and a
+     * path parameter in a template is always required. An optional Laravel
+     * parameter such as `/report/{year?}` is therefore two OpenAPI paths, not
+     * one optional parameter. An earlier version of this generator emitted
+     * `{year?}` without a change. That output declares a parameter named
+     * "year?" nowhere, and it is not valid OpenAPI.
      *
      * @return array<string, list<array<string, mixed>>> path => parameter objects
      */
@@ -254,8 +267,8 @@ class DiscoveryDocument
             $name = $match[1][0];
             $optional = ($match[2][0] ?? '') === '?';
 
-            // Everything up to an optional parameter is a path in its own
-            // right: the shorter form the route also answers.
+            // The part of the URI before an optional parameter is also a
+            // path. It is the shorter form that the route answers.
             if ($optional) {
                 $shorter = rtrim(substr($uri, 0, $match[0][1]), '/');
                 $variants[$shorter === '' ? '/' : $shorter] = $parameters;
@@ -270,8 +283,8 @@ class DiscoveryDocument
             );
         }
 
-        // The full form, with every optional parameter supplied, is always a
-        // path too.
+        // The full form, which supplies every optional parameter, is always a
+        // path.
         $variants[preg_replace('/\{\s*(\w+)\s*\?\s*\}/', '{$1}', $uri) ?? $uri] = $parameters;
 
         return $variants;
@@ -294,9 +307,11 @@ class DiscoveryDocument
     }
 
     /**
-     * One OpenAPI parameter object. A site owner states either a description —
-     * the only thing a path parameter usually needs — or a full parameter array
-     * to merge, for the cases where it needs more.
+     * Builds one OpenAPI parameter object.
+     *
+     * A site owner states a description, which is usually all that a path
+     * parameter needs. A site owner can also state a full parameter array,
+     * which the package merges, for a parameter that needs more.
      *
      * @param  string|array<string, mixed>|null  $stated
      * @return array<string, mixed>
@@ -306,10 +321,10 @@ class DiscoveryDocument
         $schema = ['type' => 'string'];
 
         if ($pattern !== null && $pattern !== '') {
-            // A Laravel `where()` constraint is matched against the whole
-            // segment; a JSON Schema `pattern` is a search unless anchored, so
-            // an unanchored constraint is anchored on the way out to keep its
-            // meaning.
+            // Laravel matches a `where()` constraint against the whole
+            // segment. A JSON Schema `pattern` is a search unless it is
+            // anchored. The package therefore anchors a constraint that is not
+            // anchored, to keep its meaning.
             $schema['pattern'] = str_contains($pattern, '^') || str_contains($pattern, '$')
                 ? $pattern
                 : '^(?:'.$pattern.')$';
@@ -322,9 +337,8 @@ class DiscoveryDocument
         }
 
         if (is_array($stated)) {
-            // The stated array wins field by field, so `['schema' => …]`
-            // replaces the derived one and `['description' => …]` alone leaves
-            // it in place.
+            // The stated array wins field by field. `['schema' => …]` replaces
+            // the derived schema. `['description' => …]` alone keeps it.
             $parameter = $stated + $parameter;
         }
 
@@ -332,16 +346,16 @@ class DiscoveryDocument
     }
 
     /**
-     * Hand the finished document to the application's own post-processors, the
-     * last word on everything.
+     * Passes the finished document to the post-processors of the application.
      *
-     * OpenAPI is large, this package models the part of it the payment drafts
-     * care about, and the gap between the two is where a site owner would
-     * otherwise be stuck: security schemes, webhooks, `$ref` components,
-     * whatever OpenAPI adds next. Rather than grow a config key per field, the
-     * document passes through `mpp.discovery.pipeline` — `[Class::class,
-     * 'method']` pairs, resolved through the container so the registry survives
-     * `config:cache` — each taking the document array and returning it.
+     * OpenAPI is large. This package models the part of it that the payment
+     * drafts use. A site owner can need a part that the package does not model,
+     * such as a security scheme, a webhook, a `$ref` component, or a field that
+     * OpenAPI adds later. The package does not add a config key for each field.
+     * The document passes through `mpp.discovery.pipeline` instead. Each entry
+     * is a `[Class::class, 'method']` pair that the container resolves, so the
+     * list survives `config:cache`. Each stage receives the document array and
+     * returns it.
      *
      * @param  array<string, mixed>  $document
      * @return array<string, mixed>
@@ -383,13 +397,15 @@ class DiscoveryDocument
         $args = $this->middlewareArgs($route);
 
         if ($args === null) {
-            // Not gated by the `mpp` middleware; the action may still carry the
-            // attribute (the automatic-enforcer route style).
+            // The `mpp` middleware does not gate this route. The action can
+            // still carry the attribute, which is the automatic-enforcer route
+            // style.
             $resolved = $this->attributeArgs($route);
         } else {
-            // A bare `mpp` reads the action's attribute at runtime, so discovery
-            // does too. A gated route that states nothing anywhere still
-            // advertises whatever the global defaults price it at.
+            // A bare `mpp` reads the attribute of the action at runtime, so
+            // discovery reads it too. A gated route that states nothing
+            // anywhere still advertises the price that the global defaults
+            // give it.
             $resolved = ($args === [] ? $this->attributeArgs($route) : $this->fromMiddlewareArgs($args))
                 ?? $this->resolve(null, null, null, null);
         }
@@ -409,12 +425,12 @@ class DiscoveryDocument
     }
 
     /**
-     * Fold the route's price notes into its offers.
+     * Adds the price notes of the route to its offers.
      *
-     * A note is documentation, so it is applied here rather than inside
-     * `offer()`: pricing an offer and describing one are separate jobs, and the
-     * description then lands the same way whether the rail priced cleanly or
-     * failed to.
+     * A note is documentation, so the package applies it here and not in
+     * `offer()`. To price an offer and to describe an offer are separate jobs.
+     * The description then arrives in the same way whether the rail priced the
+     * offer or failed to price it.
      *
      * @param  array{offers: non-empty-list<array<string, mixed>>}  $info
      * @return array{offers: non-empty-list<array<string, mixed>>}
@@ -437,8 +453,9 @@ class DiscoveryDocument
     }
 
     /**
-     * The raw arguments of the route's `mpp` middleware — `mpp:0.50,USD,…` gives
-     * `['0.50', 'USD', …]`, a bare `mpp` gives `[]`.
+     * Returns the raw arguments of the `mpp` middleware of the route.
+     *
+     * `mpp:0.50,USD,…` gives `['0.50', 'USD', …]`. A bare `mpp` gives `[]`.
      *
      * @return list<string>|null null when the route carries no `mpp` middleware
      */
@@ -459,9 +476,11 @@ class DiscoveryDocument
     }
 
     /**
-     * Read a price out of middleware arguments exactly as SpecResolver does: a
-     * leading price_book key names an entry, otherwise the leading positional
-     * arguments are the amount and currency.
+     * Reads a price from the middleware arguments, in the same way as
+     * SpecResolver.
+     *
+     * A leading price_book key names an entry. If there is no such key, the
+     * leading positional arguments are the amount and the currency.
      *
      * @param  non-empty-list<string>  $args
      * @return array{?string, string, list<string>}
@@ -483,9 +502,10 @@ class DiscoveryDocument
             );
         }
 
-        // Positional args — amount, then currency — run until the first
-        // key=value option, so `mpp:scope=clip` (no positional) inherits the
-        // global price rather than reading "scope=clip" as an amount.
+        // The positional arguments are the amount and then the currency. They
+        // end at the first key=value option. `mpp:scope=clip` has no positional
+        // argument, so it inherits the global price. The package does not read
+        // "scope=clip" as an amount.
         $positional = [];
         foreach ($args as $arg) {
             if (str_contains($arg, '=')) {
@@ -524,8 +544,11 @@ class DiscoveryDocument
     }
 
     /**
-     * Fill what the route left unstated from `mpp.defaults`, and settle the
-     * offered method set — SpecResolver's precedence, on the same config keys.
+     * Fills what the route left unstated from `mpp.defaults`, and settles the
+     * offered method set.
+     *
+     * The precedence is the precedence of SpecResolver, on the same config
+     * keys.
      *
      * @param  list<string>|null  $methods
      * @return array{?string, string, list<string>}
@@ -535,8 +558,8 @@ class DiscoveryDocument
         $amount ??= config('mpp.defaults.amount');
 
         return [
-            // "States no price" is null: such a route is priced by its
-            // resolvers, at request time.
+            // Null means that the route states no price. The resolvers of the
+            // route price it at request time.
             ($amount === null || $amount === '') ? null : (string) $amount,
             strtoupper($currency ?: (string) (config('mpp.defaults.currency') ?: 'USD')),
             OfferedMethods::resolve($method, $methods),
@@ -544,10 +567,11 @@ class DiscoveryDocument
     }
 
     /**
-     * One discovery offer, derived through the same builder that mints the
-     * live challenge. Amounts are minor-unit integer strings, per the
-     * discovery schema; `amount` is null when only a request can price the
-     * route.
+     * Builds one discovery offer through the builder that mints the live
+     * challenge.
+     *
+     * An amount is a minor-unit integer string, as the discovery schema
+     * requires. `amount` is null when only a request can price the route.
      *
      * @return array<string, mixed>
      */
@@ -567,17 +591,18 @@ class DiscoveryDocument
         try {
             $request = ChallengeFactory::builderFor($method, $config)->build($spec, $config);
         } catch (\Throwable $e) {
-            // A misconfigured rail must not take discovery down: the offer still
-            // says the rail is on, without claiming a price. The live 402 will
-            // surface the configuration error where it can be acted on — but
-            // only once someone calls the route, so say it here too.
+            // A misconfigured rail must not stop discovery. The offer still
+            // states that the rail is available, and claims no price. The live
+            // 402 reports the configuration error where someone can act on it,
+            // but only after a client calls the route. The package therefore
+            // also reports the error here.
             Log::warning("[mpp] Discovery could not derive the '{$method}' offer: ".$e->getMessage());
 
             return $offer + ['amount' => null];
         }
 
-        // The rail's own conversion is authoritative for a stated price; an
-        // unstated one stays null however the probe converted.
+        // The conversion of the rail is authoritative for a stated price. An
+        // unstated price stays null, whatever the probe converted.
         $offer['amount'] = $amount === null ? null : (string) $request['amount'];
         $offer['currency'] = (string) $request['currency'];
 
@@ -603,8 +628,10 @@ class DiscoveryDocument
     }
 
     /**
-     * A price_book entry's own offered set, accepting either an array or the
-     * pipe-separated string the middleware option takes.
+     * Returns the offered set of a price_book entry.
+     *
+     * The entry states either an array or the pipe-separated string that the
+     * middleware option takes.
      *
      * @param  array<string, mixed>  $entry
      * @return list<string>

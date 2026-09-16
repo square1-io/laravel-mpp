@@ -9,20 +9,22 @@ use ReflectionFunctionAbstract;
 use ReflectionMethod;
 
 /**
- * Reflection over whatever a route was given to run.
+ * Reflects over the action that a route runs.
  *
- * Discovery reads three things off the action — its `#[RequiresPayment]` and
- * `#[DiscoveryInfo]` attributes, its docblock, and its type-hinted FormRequest —
- * and a route's action is a closure as often as it is `Controller@method`. One
- * place resolves it so a closure route is not quietly worth less documentation
- * than a controller one.
+ * Discovery reads three things from the action: its `#[RequiresPayment]` and
+ * `#[DiscoveryInfo]` attributes, its docblock, and the FormRequest that it
+ * type-hints. The action of a route is a closure as often as it is
+ * `Controller@method`. One class resolves both forms, so a closure route gets
+ * as much documentation as a controller route.
  */
 final class RouteAction
 {
     /**
-     * The action as something reflectable, or null when the route runs
-     * something reflection cannot reach (a missing class, a string callable to
-     * nowhere). Callers treat null as "the route states nothing".
+     * Returns the action as a reflection object.
+     *
+     * The method returns null when reflection cannot reach the action, for
+     * example a missing class or a string callable that points to nothing. A
+     * caller treats null as "the route states nothing".
      */
     public static function reflect(Route $route): ?ReflectionFunctionAbstract
     {
@@ -48,8 +50,10 @@ final class RouteAction
     }
 
     /**
-     * Read an attribute off the action, falling back to the class — a whole
-     * controller can be annotated once, exactly as `#[RequiresPayment]` allows.
+     * Reads an attribute from the action, and then from the class.
+     *
+     * A site owner can annotate a whole controller once, in the same way as
+     * `#[RequiresPayment]` allows.
      *
      * @template T of object
      *

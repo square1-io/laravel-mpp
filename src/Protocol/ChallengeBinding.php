@@ -6,19 +6,22 @@ use Square1\Mpp\Exceptions\InvalidConfigurationException;
 use Square1\Mpp\Support\Base64Url;
 
 /**
- * The MPP core spec's recommended stateless challenge binding: the challenge id
- * IS an HMAC-SHA256 over seven fixed positional slots —
+ * The stateless challenge binding that the MPP core spec recommends.
+ *
+ * The challenge id IS an HMAC-SHA256 over seven fixed positional slots:
  *
  *   realm | method | intent | request_b64 | expires | digest | opaque_b64
  *
- * — base64url-encoded without padding. Absent optional slots contribute an
- * empty string, so (expires set, no digest) and (no expires, digest set)
- * produce distinct inputs and a future eighth slot cannot silently change the
- * HMAC of challenges that omit it.
+ * The package encodes the result as base64url without padding. An optional slot
+ * that is absent contributes the empty string. The combination (expires set, no
+ * digest) therefore produces a different input from (no expires, digest set). An
+ * eighth slot that the package adds later also cannot change the HMAC of a
+ * challenge that omits it.
  *
- * A client cannot alter price, recipient, expiry, body digest or correlation
- * data between the 402 and the paid retry without invalidating the id;
- * verification is a recompute-and-compare, no signature parameter on the wire.
+ * A client cannot change the price, the recipient, the expiry, the body digest
+ * or the correlation data between the 402 and the paid retry. Any change makes
+ * the id invalid. Verification recomputes the id and compares it, and the wire
+ * format carries no signature parameter.
  */
 final class ChallengeBinding
 {

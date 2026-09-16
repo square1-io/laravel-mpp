@@ -8,11 +8,11 @@ use Square1\Mpp\Discovery\OperationInfo;
 /**
  * Describes a payment-gated route in the `/openapi.json` discovery document.
  *
- * `#[RequiresPayment]` states what a route COSTS; this states what it IS. The
- * two are deliberately separate: pricing is enforced at runtime and a typo in it
- * is a bug, while everything here is advisory documentation a registry or an
- * agent reads before it ever calls you. Nothing on this attribute can change
- * what is charged.
+ * `#[RequiresPayment]` states what a route COSTS. This attribute states what
+ * the route IS. The two are deliberately separate. The package enforces the
+ * price at runtime, and a typo in it is a defect. Everything in this attribute
+ * is advisory documentation, which a registry or an agent reads before it calls
+ * you. No field of this attribute can change the amount that you charge.
  *
  *   #[RequiresPayment(amount: '0.50', currency: 'USD')]
  *   #[DiscoveryInfo(
@@ -26,11 +26,12 @@ use Square1\Mpp\Discovery\OperationInfo;
  *   )]
  *   public function clip(ClipRequest $request) { … }
  *
- * Every field is optional, and anything omitted is either derived from the
- * application (the route name becomes `operationId`, a `FormRequest` type-hint
- * becomes the input schema) or simply left out of the document. The same fields
- * are available on a route — `->discovery(summary: '…')` — and in
- * `config('mpp.discovery.operations')`, for routes you cannot annotate.
+ * Every field is optional. The package derives an omitted field from the
+ * application where it can: the route name becomes the `operationId`, and a
+ * `FormRequest` type-hint becomes the input schema. The package leaves any
+ * other omitted field out of the document. The same fields are available on a
+ * route, as `->discovery(summary: '…')`, and in
+ * `config('mpp.discovery.operations')` for a route that you cannot annotate.
  *
  * @see OperationInfo for what each field becomes
  */
@@ -38,24 +39,29 @@ use Square1\Mpp\Discovery\OperationInfo;
 final class DiscoveryInfo
 {
     /**
-     * @param  string|null  $summary  one-line operation title, shown in registry listings
-     * @param  string|null  $description  longer prose; Markdown is allowed by OpenAPI
-     * @param  string|array<string, string>|null  $priceNote  the offers' `description` — one note for
-     *                                                        every rail, or a map keyed by method name
-     * @param  list<string>  $tags  OpenAPI operation tags
-     * @param  string|null  $operationId  defaults to the route's name
-     * @param  class-string|array<string, mixed>|null  $request  input schema: a JSON Schema array, a full
-     *                                                           OpenAPI requestBody array, or the class name of
-     *                                                           a FormRequest / a class with a `schema()` method
-     * @param  class-string|array<string, mixed>|null  $response  output schema: a JSON Schema array for the 200
-     *                                                            response, a map keyed by status code, or a class
-     *                                                            name as above
-     * @param  array<string, string|array<string, mixed>>  $parameters  path parameter name => description, or a
-     *                                                                  full OpenAPI parameter array to merge
-     * @param  array<string, string|array<string, mixed>>  $query  query parameter name => description, or a full
-     *                                                             OpenAPI parameter array
-     * @param  bool|null  $deprecated  marks the operation deprecated in the document
-     * @param  bool|null  $hidden  keeps the route out of the document entirely; it stays payable
+     * @param  string|null  $summary  the one-line title of the operation, which a registry
+     *                                shows in its listings
+     * @param  string|null  $description  longer text. OpenAPI allows Markdown.
+     * @param  string|array<string, string>|null  $priceNote  the `description` of the offers. Pass one
+     *                                                        note for every rail, or a map keyed by
+     *                                                        method name.
+     * @param  list<string>  $tags  the OpenAPI tags of the operation
+     * @param  string|null  $operationId  the default is the name of the route
+     * @param  class-string|array<string, mixed>|null  $request  the input schema. Pass a JSON Schema array,
+     *                                                           a full OpenAPI requestBody array, or the name
+     *                                                           of a FormRequest class or of a class with a
+     *                                                           `schema()` method.
+     * @param  class-string|array<string, mixed>|null  $response  the output schema. Pass a JSON Schema array
+     *                                                            for the 200 response, a map keyed by status
+     *                                                            code, or a class name as above.
+     * @param  array<string, string|array<string, mixed>>  $parameters  a map of path parameter name to
+     *                                                                  description, or to a full OpenAPI
+     *                                                                  parameter array to merge
+     * @param  array<string, string|array<string, mixed>>  $query  a map of query parameter name to
+     *                                                             description, or to a full OpenAPI
+     *                                                             parameter array
+     * @param  bool|null  $deprecated  marks the operation as deprecated in the document
+     * @param  bool|null  $hidden  keeps the route out of the document. The route stays payable.
      */
     public function __construct(
         public readonly ?string $summary = null,
@@ -67,10 +73,11 @@ final class DiscoveryInfo
         public readonly string|array|null $response = null,
         public readonly array $parameters = [],
         public readonly array $query = [],
-        // Nullable, like every other field here, so that null means "said
-        // nothing" and `false` can say something: `#[DiscoveryInfo(hidden:
-        // false)]` overrides a `hidden: true` in config, which is what the
-        // nearest-to-the-route-wins rule promises for the other nine fields.
+        // These two fields are nullable, like every other field here. Null
+        // means "stated nothing", and `false` therefore states something.
+        // `#[DiscoveryInfo(hidden: false)]` overrides a `hidden: true` in the
+        // config. That is the rule that the other nine fields follow: the
+        // source nearest to the route wins.
         public readonly ?bool $deprecated = null,
         public readonly ?bool $hidden = null,
     ) {}

@@ -5,24 +5,26 @@ namespace Square1\Mpp\Discovery;
 use Square1\Mpp\Attributes\DiscoveryInfo;
 
 /**
- * The documentation a site owner states about one payable operation, normalised
- * out of whichever of the three surfaces it was written on.
+ * The documentation that a site owner states about one payable operation.
  *
- * A site owner can say the same thing in three places, and which one they reach
- * for is a matter of where the route lives rather than what they want to say:
+ * A site owner can state the same data in three places. Which place to use
+ * depends on where the route is defined, not on what the site owner wants to
+ * state:
  *
- *   1. `->discovery(summary: '…')` on the route — closures and route files;
- *   2. `#[DiscoveryInfo(summary: '…')]` on the action — controllers;
+ *   1. `->discovery(summary: '…')` on the route, for closures and route files;
+ *   2. `#[DiscoveryInfo(summary: '…')]` on the action, for controllers;
  *   3. `config('mpp.discovery.operations')`, keyed by route name or
- *      `"GET /uri"` — routes from a package you do not edit.
+ *      `"GET /uri"`, for routes from a package that you do not edit.
  *
- * They all produce one of these, and `mergeUnder()` settles a route that uses
- * more than one: the nearer the route a thing is written, the more it wins, so
- * the order above is also the precedence. Merging is per FIELD, not per source —
- * a summary in config survives a route macro that only sets a price note.
+ * Each place produces one of these objects. `mergeUnder()` settles a route that
+ * uses more than one place. The place that is nearest to the route wins, so the
+ * order above is also the precedence.
  *
- * Nothing here is authoritative for payment. A registry may show it, an agent
- * may plan against it, and the 402 still decides what is owed.
+ * The merge works on each FIELD, not on each source. A summary in the config
+ * therefore survives a route macro that sets only a price note.
+ *
+ * Nothing here is authoritative for payment. A registry can show it, and an
+ * agent can plan against it. The 402 decides what the client owes.
  */
 final class OperationInfo
 {
@@ -54,10 +56,12 @@ final class OperationInfo
     }
 
     /**
+     * Builds the value object from the attribute.
+     *
      * The attribute declares the same eleven fields under the same names, and
-     * `fromArray()` already coerces each of them, so the mapping is the
-     * property list itself. Enumerating it again would assert a correspondence
-     * nothing checks, and a renamed attribute field would go quietly unread.
+     * `fromArray()` coerces each of them. The property list is therefore the
+     * whole mapping. A second list here would state a correspondence that
+     * nothing checks, and the package would not read a renamed attribute field.
      */
     public static function fromAttribute(DiscoveryInfo $attribute): self
     {
@@ -65,10 +69,12 @@ final class OperationInfo
     }
 
     /**
-     * Build from the loose array shape the route macro and config both take.
-     * Unknown keys are ignored rather than rejected: a discovery document is
-     * advisory, and a typo in it must never take an endpoint's documentation
-     * down with it.
+     * Builds the value object from the loose array that the route macro and the
+     * config both take.
+     *
+     * The package ignores an unknown key and does not reject it. A discovery
+     * document is advisory, and a typo must not remove the documentation of an
+     * endpoint.
      *
      * @param  array<string, mixed>  $values
      */
@@ -100,8 +106,10 @@ final class OperationInfo
     }
 
     /**
-     * Fill every field this one leaves unstated from `$fallback`. The receiver
-     * is the higher-precedence source, and it wins field by field.
+     * Fills every field that this object leaves unstated from `$fallback`.
+     *
+     * The receiver is the source with the higher precedence. It wins field by
+     * field.
      */
     public function mergeUnder(self $fallback): self
     {
@@ -121,12 +129,15 @@ final class OperationInfo
     }
 
     /**
-     * The same value with a different `operationId` — the one case where the
-     * document settles a field the sources did not: a route serving several
-     * OpenAPI paths cannot give them all one id, which OpenAPI requires to be
-     * unique. Returning a settled value object keeps a single answer to "what
-     * is this operation's id" in flight, rather than passing the corrected one
-     * alongside the stale one.
+     * Returns the same value with a different `operationId`.
+     *
+     * This is the one field that the document settles and the sources do not. A
+     * route can serve several OpenAPI paths, and those paths cannot share one
+     * id. OpenAPI requires the id to be unique.
+     *
+     * The method returns a settled value object. One answer to "what is the id
+     * of this operation" is then in use, instead of a corrected answer beside a
+     * stale one.
      */
     public function withOperationId(?string $operationId): self
     {
@@ -146,10 +157,11 @@ final class OperationInfo
     }
 
     /**
-     * The `description` for one rail's offer. A bare string documents every
-     * offer on the route; a map documents each rail in its own words, which is
-     * what a route wants when the rails differ in more than price ("settles
-     * instantly" vs "card, 3-day refund window").
+     * Returns the `description` for the offer of one rail.
+     *
+     * A plain string documents every offer on the route. A map documents each
+     * rail separately. Use a map when the rails differ in more than price, for
+     * example "settles immediately" against "card, 3-day refund window".
      */
     public function priceNoteFor(string $method): ?string
     {

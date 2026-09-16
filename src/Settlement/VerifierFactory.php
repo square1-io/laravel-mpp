@@ -6,9 +6,11 @@ use Illuminate\Contracts\Container\Container;
 use Square1\Mpp\Exceptions\InvalidConfigurationException;
 
 /**
- * Resolves the configured Verifier for a given settlement method through the
- * container, so an application (or a test) can rebind a method's verifier
- * without touching the protocol layer.
+ * Resolves the configured Verifier for a settlement method, through the
+ * container.
+ *
+ * An application, or a test, can therefore bind a different verifier for a
+ * method without a change to the protocol layer.
  */
 class VerifierFactory
 {

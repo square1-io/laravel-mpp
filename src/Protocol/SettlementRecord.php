@@ -5,24 +5,28 @@ namespace Square1\Mpp\Protocol;
 use Symfony\Component\HttpFoundation\Cookie;
 
 /**
- * The record of one settled challenge, kept so a retry replays the exact
- * original outcome instead of re-running the protected action.
+ * The record of one settled challenge.
  *
- * Replaying the stored response — rather than calling the action again — is what
- * makes a lost-response retry idempotent: the action runs exactly once, so its
- * side effects (a POST, a job dispatch) never repeat.
+ * The package keeps the record so that a retry replays the original outcome,
+ * instead of running the protected action again.
  *
- * `fingerprint` is a non-reversible hash of the successful credential's proof,
- * the request-body digest, and the concrete request target. Replay requires it
- * to match, so a settled receipt is not a bearer token: the challenge id alone
- * (which is not secret) cannot retrieve the response — only the same payer
- * repeating the same request can.
+ * To replay the stored response, and not to call the action again, is what makes
+ * a retry after a lost response idempotent. The action runs exactly once, so its
+ * side effects, such as a POST or a dispatched job, never repeat.
  *
- * The response snapshot is the full buffered response: status, body, every
- * header, and cookies. Streamed, binary, and over-limit responses are not
- * snapshotted at all (they cannot be replayed faithfully); the gate records
- * nothing for them, so their retries take a fresh challenge. The session id, not
- * the session, is stored so `remaining` is re-read live at replay.
+ * `fingerprint` is a hash that no one can reverse. It covers the proof of the
+ * successful credential, the digest of the request body, and the concrete
+ * request target. A replay needs a match. A settled receipt is therefore not a
+ * bearer token. The challenge id alone cannot retrieve the response, and that id
+ * is not secret. Only the same payer that repeats the same request can retrieve
+ * it.
+ *
+ * The response snapshot is the full buffered response: the status, the body,
+ * every header, and the cookies. The gate does not snapshot a streamed response,
+ * a binary response, or a response over the size limit, because it cannot replay
+ * them correctly. The gate records nothing for such a response, so a retry takes
+ * a fresh challenge. The record holds the session id and not the session, so
+ * that the package reads `remaining` from the live session at replay.
  *
  * @param  array<string, list<string>>  $headers
  * @param  list<Cookie>  $cookies

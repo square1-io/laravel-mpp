@@ -7,22 +7,28 @@ use Square1\Mpp\Support\Evm\Keccak;
 use Throwable;
 
 /**
- * Broadcasts a client-signed Tempo transaction and confirms its on-chain result.
+ * Broadcasts a Tempo transaction that the client signed, and confirms its
+ * on-chain result.
  *
- * This is the live, pure-PHP integration with the Tempo (or any EVM) JSON-RPC
- * endpoint. It holds NO private key and pays NO gas — the client already signed
- * a complete transaction that pays its own fees; this class only:
+ * This is the live integration with the Tempo JSON-RPC endpoint, or with any EVM
+ * JSON-RPC endpoint, in pure PHP. It holds NO private key and pays NO gas,
+ * because the client has already signed a complete transaction that pays its own
+ * fees. This class does only the following:
  *
- *   1. broadcasts the signed bytes via `eth_sendRawTransaction`,
- *   2. polls `eth_getTransactionReceipt` until the transaction is mined,
- *   3. checks the receipt status is `0x1` (success, not a revert),
- *   4. requires the receipt to carry a TIP-20 Transfer / TransferWithMemo log to
- *      the expected recipient for the expected amount on the expected token
- *      (defence-in-depth on top of the pre-broadcast calldata validation the
- *      Verifier already did), and
- *   5. computes confirmation depth so the Verifier can enforce finality.
+ *   1. It broadcasts the signed bytes with `eth_sendRawTransaction`.
+ *   2. It polls `eth_getTransactionReceipt` until the network mines the
+ *      transaction.
+ *   3. It checks that the status of the receipt is `0x1`, which means success
+ *      and not a revert.
+ *   4. It requires the receipt to carry a TIP-20 Transfer or TransferWithMemo
+ *      log, to the expected recipient, for the expected amount, on the expected
+ *      token. This repeats the calldata validation that the Verifier performed
+ *      before the broadcast, as a second defence.
+ *   5. It computes the confirmation depth, so that the Verifier can enforce
+ *      finality.
  *
- * It fails closed on any RPC failure, revert, missing receipt, or unmatched log.
+ * The class fails closed on an RPC failure, a revert, a missing receipt, or a
+ * log that does not match.
  */
 final class TempoRpcSettlementChecker implements SettlementChecker
 {
@@ -50,8 +56,9 @@ final class TempoRpcSettlementChecker implements SettlementChecker
         try {
             $hash = $this->rpc->sendRawTransaction($signedTransaction);
         } catch (Throwable $e) {
-            // A re-broadcast of an already-known transaction is not a failure: the
-            // signed bytes are deterministic, so derive the hash and confirm it.
+            // A re-broadcast of a transaction that the network already knows is
+            // not a failure. The signed bytes are deterministic, so derive the hash
+            // and confirm it.
             $hash = $this->deriveHash($signedTransaction);
 
             if ($hash === null) {
@@ -107,11 +114,11 @@ final class TempoRpcSettlementChecker implements SettlementChecker
     }
 
     /**
-     * Find a Transfer / TransferWithMemo log emitted by the token contract that
-     * pays the expected amount to the expected recipient.
+     * Finds a Transfer or TransferWithMemo log that the token contract emitted,
+     * and that pays the expected amount to the expected recipient.
      *
      * @param  array<string, mixed>  $receipt
-     * @return array<string, mixed>|null the matched log
+     * @return array<string, mixed>|null the log that matched
      */
     private function findTransferLog(array $receipt, string $token, string $recipient, string $amount): ?array
     {
@@ -136,13 +143,14 @@ final class TempoRpcSettlementChecker implements SettlementChecker
                 continue;
             }
 
-            // topics[2] = indexed `to`.
+            // topics[2] is the indexed `to` address.
             $to = $topics[2] ?? '';
             if (strtolower($to) !== strtolower($recipientWord)) {
                 continue;
             }
 
-            // `amount` is the first 32-byte word of the (non-indexed) data.
+            // `amount` is the first 32-byte word of the data, which is not
+            // indexed.
             $data = strtolower(ltrim((string) ($log['data'] ?? ''), '0'));
             $dataHex = str_starts_with((string) ($log['data'] ?? ''), '0x') ? substr((string) $log['data'], 2) : (string) ($log['data'] ?? '');
             $amountWord = strtolower(substr(str_pad($dataHex, 64, '0', STR_PAD_LEFT), 0, 64));

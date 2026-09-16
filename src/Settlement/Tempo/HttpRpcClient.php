@@ -6,9 +6,11 @@ use Illuminate\Http\Client\Factory as HttpFactory;
 use RuntimeException;
 
 /**
- * {@see RpcClient} backed by Laravel's HTTP client. Talks plain Ethereum
- * JSON-RPC to the configured Tempo RPC URL. Holds no key and signs nothing — the
- * client signed the transaction; we only broadcast it and read its receipt.
+ * An {@see RpcClient} that uses the HTTP client of Laravel.
+ *
+ * It speaks plain Ethereum JSON-RPC to the configured Tempo RPC URL. It holds no
+ * key and signs nothing. The client signed the transaction. This class
+ * broadcasts it and reads its receipt.
  */
 final class HttpRpcClient implements RpcClient
 {

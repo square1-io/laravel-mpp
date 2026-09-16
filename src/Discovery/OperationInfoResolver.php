@@ -9,23 +9,25 @@ use ReflectionNamedType;
 use Square1\Mpp\Attributes\DiscoveryInfo;
 
 /**
- * Settles what the discovery document says about one route.
+ * Settles what the discovery document states about one route.
  *
- * Four sources, in descending precedence:
+ * There are four sources, in descending precedence:
  *
- *   1. the route — `->discovery(summary: '…')`;
- *   2. the action — `#[DiscoveryInfo(summary: '…')]`;
+ *   1. the route, as `->discovery(summary: '…')`;
+ *   2. the action, as `#[DiscoveryInfo(summary: '…')]`;
  *   3. `config('mpp.discovery.operations')`, keyed by route name or `"GET /uri"`;
  *   4. the application itself.
  *
- * The fourth is the point of the other three being optional. A Laravel route
- * already carries most of what a registry wants to know: it has a name, which is
- * an `operationId`; its action has a docblock, which is a summary; its action
- * type-hints a FormRequest, whose rules are an input schema. The package reads
- * those rather than asking for them a second time, on the same principle that
- * makes it derive prices from the live router instead of a hand-kept list —
- * a document maintained apart from the thing it describes goes stale, and a
- * stale one is worse than a thin one.
+ * The fourth source is why the other three are optional. A Laravel route
+ * already holds most of the data that a registry wants. The route has a name,
+ * which is an `operationId`. The action has a docblock, which is a summary. The
+ * action type-hints a FormRequest, and the rules of that class are an input
+ * schema.
+ *
+ * The package reads that data instead of asking for it a second time. It
+ * derives prices from the live router for the same reason. Documentation that
+ * you keep apart from the code becomes incorrect, and incorrect documentation
+ * is worse than short documentation.
  */
 final class OperationInfoResolver
 {
@@ -43,10 +45,11 @@ final class OperationInfoResolver
     }
 
     /**
-     * The per-operation config block for this route, looked up by route name
-     * first and then by `"GET /uri"` and `"/uri"`. The name is the stable
-     * identity and the preferred key; the URI forms are there for routes that
-     * have no name, which is most closure routes.
+     * Returns the config block for this route.
+     *
+     * The method looks up the route name first, and then `"GET /uri"` and
+     * `"/uri"`. The name is the stable identity and the preferred key. The URI
+     * forms serve a route that has no name, which is most closure routes.
      */
     private function fromConfig(Route $route): OperationInfo
     {
@@ -66,9 +69,11 @@ final class OperationInfoResolver
     }
 
     /**
-     * What the application already states, read off the route and its action.
-     * This is the lowest-precedence source: anything written for discovery
-     * deliberately outranks anything inferred on its behalf.
+     * Returns the data that the application already states, read from the route
+     * and its action.
+     *
+     * This is the source with the lowest precedence. Anything that a site owner
+     * writes for discovery outranks anything that the package infers.
      */
     private function derived(Route $route): OperationInfo
     {
@@ -82,10 +87,10 @@ final class OperationInfoResolver
             summary: $summary,
             description: $description,
             operationId: $this->operationId($route),
-            // Only for a verb that carries a body. A GET action may well
-            // type-hint a FormRequest to validate its query string, and
-            // publishing those rules as a request BODY would describe a request
-            // no client should send.
+            // This applies only to a verb that carries a body. A GET action
+            // can type-hint a FormRequest to validate its query string. To
+            // publish those rules as a request BODY would describe a request
+            // that no client is to send.
             request: config('mpp.discovery.form_requests', true) && $this->carriesBody($route)
                 ? $this->formRequest($reflection)
                 : null,
@@ -98,10 +103,12 @@ final class OperationInfoResolver
     }
 
     /**
-     * A route's name is a stable, unique, application-chosen identifier for an
-     * operation, which is exactly what `operationId` is for. A route serving
-     * several verbs needs one per operation, so the verb is appended there —
-     * `operationId` must be unique across the whole document.
+     * Returns the `operationId` for a route.
+     *
+     * The name of a route is a stable and unique identifier that the
+     * application chose, which is what `operationId` is for. A route that
+     * serves several verbs is several operations, and `operationId` must be
+     * unique in the whole document. Such a route therefore gets no id.
      */
     private function operationId(Route $route): ?string
     {
@@ -115,9 +122,10 @@ final class OperationInfoResolver
     }
 
     /**
-     * The first FormRequest the action type-hints. Laravel injects it to
-     * validate the body, so its rules describe the body — which is what the
-     * draft's input schema is.
+     * Returns the first FormRequest that the action type-hints.
+     *
+     * Laravel injects the class to validate the body, so its rules describe the
+     * body. The input schema of the draft is the same description.
      *
      * @return class-string|null
      */
@@ -145,14 +153,17 @@ final class OperationInfoResolver
     }
 
     /**
-     * The action's docblock, split the way OpenAPI splits operation prose: the
-     * first paragraph is the `summary`, the rest is the `description`. Annotation
-     * tags are dropped — `@param` is for the reader of the code, not for an
-     * agent deciding whether to pay.
+     * Returns the docblock of the action, split as OpenAPI splits operation
+     * text.
      *
-     * Off by default. A docblock is written for colleagues and can say things
-     * its author would not publish unauthenticated to a registry, so turning it
-     * into public API documentation has to be a decision rather than an upgrade.
+     * The first paragraph is the `summary`. The rest is the `description`. The
+     * package drops the annotation tags. `@param` serves the reader of the
+     * code, not an agent that decides whether to pay.
+     *
+     * This is off by default. An author writes a docblock for colleagues, and
+     * it can contain text that the author would not publish to a registry on an
+     * unauthenticated endpoint. To publish it must therefore be a decision, and
+     * not a result of an upgrade.
      *
      * @return array{?string, ?string}
      */
@@ -176,8 +187,9 @@ final class OperationInfoResolver
             $lines[] = $line;
         }
 
-        // Trim the blank lines the comment delimiters leave behind, then split
-        // on the first blank line: summary above, description below.
+        // Remove the blank lines that the comment delimiters leave. Then split
+        // at the first blank line. The summary is above it, and the description
+        // is below it.
         while ($lines !== [] && $lines[0] === '') {
             array_shift($lines);
         }

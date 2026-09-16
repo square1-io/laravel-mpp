@@ -6,39 +6,43 @@ use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Support\Facades\Log;
 
 /**
- * Turns whatever a site owner stated as a request or response schema into the
- * OpenAPI fragment the discovery document publishes.
+ * Converts what a site owner stated as a request or response schema into the
+ * OpenAPI fragment that the discovery document publishes.
  *
- * The draft asks for input and output schemas but says nothing about where they
- * come from, so this accepts the three things a Laravel application actually
- * has to hand:
+ * The draft asks for input and output schemas. It does not state where they
+ * come from. This class therefore accepts the three forms that a Laravel
+ * application has available:
  *
  *   - a JSON Schema array, written inline;
- *   - a full OpenAPI `requestBody` / response array, for anything the shorthand
- *     cannot express (several media types, `$ref`, examples);
- *   - a class name — a `FormRequest`, whose `rules()` already describe the
- *     input, or any class of your own with a `schema()` method returning an
- *     array.
+ *   - a full OpenAPI `requestBody` or response array, for anything that the
+ *     short form cannot express, such as several media types, `$ref`, or
+ *     examples;
+ *   - a class name. The class is a `FormRequest`, whose `rules()` already
+ *     describe the input, or a class of your own with a `schema()` method that
+ *     returns an array.
  *
- * A schema that cannot be resolved is logged and left out. The document stays
- * advisory: a broken schema reference must cost the operation its schema, not
- * its listing, and never the route its ability to charge.
+ * The class logs a schema that it cannot resolve, and leaves it out. The
+ * document stays advisory. An incorrect schema reference costs the operation
+ * its schema. It must not cost the operation its entry, and it must never stop
+ * the route from charging.
  */
 final class SchemaResolver
 {
     /**
-     * Schemas already derived this document, by class name. One FormRequest is
-     * commonly shared by several routes, and one route is several operations
-     * once its verbs and optional-parameter path variants are counted — without
-     * this, each of them re-instantiates the class and re-parses its rule set
-     * to arrive at the same answer.
+     * The schemas that the class has derived for this document, by class name.
+     *
+     * Several routes commonly share one FormRequest. One route is also several
+     * operations, once you count its verbs and its optional-parameter path
+     * variants. Without this cache, each operation builds the class again and
+     * parses its rule set again, and each one reaches the same answer.
      *
      * @var array<class-string, array<string, mixed>|null>
      */
     private array $derived = [];
 
     /**
-     * The `requestBody` for an operation, or null when nothing described one.
+     * Returns the `requestBody` for an operation, or null when nothing
+     * described one.
      *
      * @param  class-string|array<string, mixed>|null  $request
      * @return array<string, mixed>|null
@@ -57,8 +61,8 @@ final class SchemaResolver
 
         $body = ['content' => ['application/json' => ['schema' => $stated]]];
 
-        // A schema with required properties is a body the operation cannot run
-        // without, which is what OpenAPI's `required` means here.
+        // An operation cannot run without a body that has required
+        // properties. That is the meaning of `required` in OpenAPI here.
         if (($stated['required'] ?? []) !== []) {
             $body = ['required' => true] + $body;
         }
@@ -67,10 +71,12 @@ final class SchemaResolver
     }
 
     /**
-     * The `responses` entries a stated output schema contributes, keyed by
-     * status code. A bare schema documents the 200; a map keyed by status code
-     * documents each response it names, which is how an operation declares its
-     * error shapes as well as its success one.
+     * Returns the `responses` entries that a stated output schema contributes,
+     * keyed by status code.
+     *
+     * A plain schema documents the 200 response. A map keyed by status code
+     * documents each response that it names. An operation declares its error
+     * shapes and its success shape in that way.
      *
      * @param  class-string|array<string, mixed>|null  $response
      * @return array<string, array<string, mixed>>
@@ -100,9 +106,11 @@ final class SchemaResolver
     }
 
     /**
-     * One response object. An entry that already looks like one (it describes
-     * itself, or names its own content) is taken as written; anything else is a
-     * JSON Schema to wrap.
+     * Builds one response object.
+     *
+     * The method takes an entry as written when the entry is already a response
+     * object, that is when it has its own description or its own content. Any
+     * other entry is a JSON Schema, and the method wraps it.
      *
      * @param  array<string, mixed>  $stated
      * @return array<string, mixed>
@@ -110,9 +118,9 @@ final class SchemaResolver
     private function response(array $stated, string $fallbackDescription): array
     {
         if (isset($stated['content']) || isset($stated['description'])) {
-            // The stated description wins; the fallback only fills a response
-            // that named its content without describing it (OpenAPI requires a
-            // description on every response object).
+            // The stated description wins. The fallback fills only a response
+            // that named its content and did not describe it. OpenAPI requires
+            // a description on every response object.
             return $stated + ['description' => $fallbackDescription];
         }
 
@@ -123,9 +131,11 @@ final class SchemaResolver
     }
 
     /**
-     * True when every key is a three-digit status code (or the OpenAPI
-     * `default`), which is what distinguishes a map of responses from a single
-     * schema whose properties happen to be numbered.
+     * Reports whether every key is a three-digit status code or the OpenAPI
+     * `default` key.
+     *
+     * This test separates a map of responses from a single schema whose
+     * properties have numbers for names.
      *
      * @param  array<array-key, mixed>  $stated
      */
@@ -171,9 +181,10 @@ final class SchemaResolver
         try {
             $schema = $this->fromClass($stated);
         } catch (\Throwable $e) {
-            // Commonly a FormRequest whose rules() reads the request it was
-            // never given. The operation loses its schema and keeps everything
-            // else, and the log says which class to look at.
+            // This is commonly a FormRequest whose rules() reads a request
+            // that the package did not give it. The operation loses its schema
+            // and keeps every other field. The log names the class to
+            // examine.
             Log::warning("[mpp] Discovery could not derive the {$noun} schema from '{$stated}': ".$e->getMessage());
 
             return $this->derived[$stated] = null;
@@ -188,10 +199,10 @@ final class SchemaResolver
      */
     private function fromClass(string $class): ?array
     {
-        // Built WITHOUT the container on purpose: resolving a FormRequest
-        // through it fires Laravel's `ValidatesWhenResolved` hook, which would
-        // run the validator — and fail — while all discovery wants is the rule
-        // set the class declares.
+        // The method builds the class WITHOUT the container, on purpose. The
+        // container fires Laravel's `ValidatesWhenResolved` hook for a
+        // FormRequest. That hook runs the validator, and the validator fails.
+        // Discovery needs only the rule set that the class declares.
         $instance = new $class;
 
         if (method_exists($instance, 'schema')) {
@@ -200,10 +211,10 @@ final class SchemaResolver
             return is_array($schema) ? $schema : null;
         }
 
-        // Narrowed to a FormRequest rather than anything with a `rules()`
-        // method: `rules()` is a common enough name that reading it off a
-        // policy or a value object would publish something that was never a
-        // request shape. A class of your own says so with `schema()`.
+        // The test is for a FormRequest, not for any class with a `rules()`
+        // method. `rules()` is a common method name. To read it from a policy
+        // or a value object would publish data that was never a request shape.
+        // A class of your own declares a schema with `schema()`.
         if ($instance instanceof FormRequest) {
             return ValidationSchema::fromRules((array) $instance->rules());
         }

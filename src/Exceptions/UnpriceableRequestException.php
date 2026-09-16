@@ -3,16 +3,18 @@
 namespace Square1\Mpp\Exceptions;
 
 /**
- * A request reached the gate with nothing having priced it: the route states no
- * amount and every price resolver declined.
+ * A request reached the gate and nothing had priced it. The route states no
+ * amount, and every price resolver declined.
  *
- * Deliberately not an InvalidConfigurationException. The configuration is valid
- * — a resolver is registered and attached — and the outcome depends on the
- * request in hand, so this can recur in production long after deploy rather
- * than surfacing once at boot. Triage should read it as "a resolver returned
- * null for this caller", not "someone mis-wired the config".
+ * This is deliberately not an InvalidConfigurationException. The configuration
+ * is valid, because a resolver is registered and attached. The outcome depends
+ * on the request itself. This exception can therefore occur in production long
+ * after a deploy, and not once at boot.
  *
- * The usual cause is a resolver meaning to waive the charge and returning null.
- * Null is "no opinion"; waiving is `['free' => true]`.
+ * Read it as "a resolver returned null for this caller", and not as "someone
+ * configured the package incorrectly".
+ *
+ * The usual cause is a resolver that intended to waive the charge and returned
+ * null. Null means "no opinion". To waive the charge is `['free' => true]`.
  */
 class UnpriceableRequestException extends MppException {}

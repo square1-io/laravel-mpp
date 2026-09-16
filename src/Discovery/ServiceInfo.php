@@ -3,30 +3,35 @@
 namespace Square1\Mpp\Discovery;
 
 /**
- * The document-level half of discovery: the OpenAPI `info` and `servers`
- * objects, and the draft's `x-service-info` extension.
+ * The document-level part of discovery: the OpenAPI `info` and `servers`
+ * objects, and the `x-service-info` extension of the draft.
  *
- * None of this varies per route, so none of it belongs on a route. It is
- * config — `config('mpp.discovery')` — and where the application already states
- * something (`app.name`, `app.url`), that is the default rather than a second
- * place to keep the same string. An empty value is omitted rather than
- * published blank: `x-service-info` is optional, and a registry reading
- * `{"docs": {}}` learns less than one reading nothing at all.
+ * None of these values changes per route, so none of them belongs on a route.
+ * They are config, under `config('mpp.discovery')`. Where the application
+ * already states a value, such as `app.name` or `app.url`, that value is the
+ * default. A site owner then keeps the same string in one place only.
+ *
+ * The class omits an empty value and does not publish it blank.
+ * `x-service-info` is optional, and a registry that reads `{"docs": {}}` learns
+ * less than a registry that reads no extension.
  */
 final class ServiceInfo
 {
     /**
-     * Settled once per document: `servers()` is read for the document's own
-     * `servers` key and again as the base every relative documentation link is
-     * resolved against.
+     * The servers, settled once per document.
+     *
+     * The class reads `servers()` for the `servers` key of the document. It
+     * reads it again as the base for each relative documentation link.
      *
      * @var list<array<string, mixed>>|null
      */
     private ?array $servers = null;
 
     /**
-     * The OpenAPI `info` object. `title` and `version` are required by the
-     * draft and always present; the rest appear only when stated.
+     * Returns the OpenAPI `info` object.
+     *
+     * The draft requires `title` and `version`, and both are always present.
+     * The other fields appear only when a site owner states them.
      *
      * @return array<string, mixed>
      */
@@ -49,14 +54,16 @@ final class ServiceInfo
     }
 
     /**
-     * The OpenAPI `servers` array — the base URL a discovered path is relative
-     * to. A registry crawling `https://example.com/openapi.json` can infer the
-     * origin, but an API served from a path prefix or a separate host cannot be
-     * inferred at all, so it is stated. `app.url` is the default because an
-     * application that is reachable at all has already set it.
+     * Returns the OpenAPI `servers` array.
      *
-     * Accepts `['https://api.example.com']` or the full OpenAPI form,
-     * `[['url' => '…', 'description' => 'Production']]`.
+     * A discovered path is relative to this base URL. A registry that crawls
+     * `https://example.com/openapi.json` can infer the origin. It cannot infer
+     * the base URL of an API that a path prefix or a different host serves, so
+     * a site owner states it. The default is `app.url`, because an application
+     * that clients can reach has already set it.
+     *
+     * The method accepts `['https://api.example.com']` or the full OpenAPI
+     * form, `[['url' => '…', 'description' => 'Production']]`.
      *
      * @return list<array<string, mixed>>
      */
@@ -94,9 +101,11 @@ final class ServiceInfo
     }
 
     /**
-     * The draft's `x-service-info` extension: what the service does
-     * (`categories`) and where a human or an agent reads more about it
-     * (`docs`). Registries index on both. Null when neither is configured.
+     * Returns the `x-service-info` extension of the draft.
+     *
+     * `categories` states what the service does. `docs` states where a person
+     * or an agent reads more about it. Registries index both fields. The method
+     * returns null when the config sets neither field.
      *
      * @return array<string, mixed>|null
      */
@@ -122,18 +131,20 @@ final class ServiceInfo
     }
 
     /**
-     * Resolve a documentation link against the service's own base URL.
+     * Resolves a documentation link against the base URL of the service.
      *
-     * The draft requires every `x-service-info` URI to conform to RFC 3986 and
-     * schema-types them `format: uri`, which means a scheme: `/llms.txt` is a
-     * relative reference, not a URI, and a strict validator rejects it. It also
-     * defeats the point — these links exist so a registry that has only the
-     * document can follow them, and a registry that has stored `"/"` has
-     * nothing to follow.
+     * The draft requires every `x-service-info` URI to conform to RFC 3986, and
+     * its schema types them `format: uri`. Both require a scheme. `/llms.txt`
+     * is a relative reference and not a URI, and a strict validator rejects it.
      *
-     * Writing `/llms.txt` in config is the natural thing to do, so it is made
-     * absolute rather than refused. Nothing to resolve against leaves it as
-     * written: a wrong absolute URL would be worse than an honest relative one.
+     * A relative link also defeats the purpose of the field. These links let a
+     * registry that holds only the document follow them. A registry that stored
+     * `"/"` can follow nothing.
+     *
+     * A site owner writes `/llms.txt` in the config because that is the natural
+     * form. The method therefore makes the link absolute and does not reject
+     * it. If there is no base URL to resolve against, the method returns the
+     * link as written. An incorrect absolute URL is worse than a relative one.
      */
     private function absolute(mixed $url): ?string
     {
@@ -141,8 +152,9 @@ final class ServiceInfo
             return null;
         }
 
-        // Already absolute, or protocol-relative (which carries its own host
-        // and must not be re-based).
+        // The link is absolute, or it is protocol-relative. A
+        // protocol-relative link carries its own host, so the method must not
+        // change its base.
         if (str_starts_with($url, '//') || preg_match('#^[a-z][a-z0-9+.\-]*:#i', $url) === 1) {
             return $url;
         }
@@ -157,8 +169,10 @@ final class ServiceInfo
     }
 
     /**
-     * Drop the keys nothing was said about. `false` and `0` survive; null, the
-     * empty string and the empty array do not.
+     * Removes the keys that the config did not state.
+     *
+     * `false` and `0` remain. Null, the empty string and the empty array do
+     * not.
      *
      * @param  array<string, mixed>  $values
      * @return array<string, mixed>
