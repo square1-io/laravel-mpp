@@ -673,7 +673,7 @@ it('takes a schema beside the headers of a response object', function () {
     // The `schema` key is the short form of `content`. Without it, a response
     // that states one header has to state a media type as well.
     expect($response['content']['application/json']['schema']['required'])
-        ->toBe(['url', 'format', 'source'])
+        ->toBe(['url', 'format', 'source', 'session'])
         ->and($response['description'])->toBe('Successful response');
 });
 
@@ -686,10 +686,45 @@ it('reads a response schema from the types of a data object', function () {
     expect($schema['type'])->toBe('object')
         ->and($schema['properties']['url'])->toBe(['type' => 'string'])
         ->and($schema['properties']['cached'])->toBe(['type' => 'boolean'])
-        ->and($schema['properties']['tags'])->toBe(['type' => 'array'])
-        // A property is required when its type forbids null and the class
-        // gives it no default.
-        ->and($schema['required'])->toBe(['url', 'format', 'source']);
+        // A property is required when the class gives it no default. A type
+        // that allows null is not a default: `?string $session` states a key
+        // that the caller must supply and may set to null.
+        ->and($schema['required'])->toBe(['url', 'format', 'source', 'session']);
+});
+
+it('keeps requiredness apart from nullability', function () {
+    $schema = $this->get('/openapi.json')
+        ->json('paths./doc/result.get.responses.200.content.application/json.schema');
+
+    // JSON Schema states the two in different keywords. `required` says that
+    // the key is present, and `type` says what the value can be.
+    expect($schema['required'])->toContain('session')
+        ->and($schema['properties']['session'])->toBe(['type' => ['string', 'null']])
+        // `?int $durationMs = null` carries a default, so the key can be
+        // absent. That is the difference, and it is the default and not the
+        // question mark.
+        ->and($schema['required'])->not->toContain('durationMs');
+});
+
+it('reads a collection type from the docblock of a property', function () {
+    $properties = $this->get('/openapi.json')
+        ->json('paths./doc/result.get.responses.200.content.application/json.schema.properties');
+
+    // A PHP `array` type names no member type. `list<string>` does.
+    expect($properties['tags'])->toBe(['type' => 'array', 'items' => ['type' => 'string']])
+        ->and($properties['sources']['items']['required'])->toBe(['id', 'width']);
+});
+
+it('states a string-keyed array as an object', function () {
+    $properties = $this->get('/openapi.json')
+        ->json('paths./doc/result.get.responses.200.content.application/json.schema.properties');
+
+    // `array<string, int>` and `list<int>` serialize differently, so the
+    // schema has to say which one a property is.
+    expect($properties['counts'])->toBe([
+        'type' => 'object',
+        'additionalProperties' => ['type' => 'integer'],
+    ]);
 });
 
 it('states a nullable property as a type union', function () {

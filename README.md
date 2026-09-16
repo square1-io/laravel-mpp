@@ -587,10 +587,13 @@ A third form needs no interface at all. When your action already returns a data 
 ```php
 final class ClipResult
 {
+    /** @param list<Scoreline> $scorelines */
     public function __construct(
         public readonly string $url,
         public readonly ClipFormat $format,      // a backed enum
         public readonly ClipSource $source,      // another data object
+        public readonly ?string $session,        // required, and can be null
+        public readonly array $scorelines = [],
         public readonly ?int $durationMs = null,
         public readonly bool $cached = false,
     ) {}
@@ -599,9 +602,23 @@ final class ClipResult
 #[DiscoveryInfo(response: ClipResult::class)]
 ```
 
-That publishes an object with all five properties and no schema to maintain. A backed enum becomes an `enum` of its case values. A nested object becomes a nested schema. `?int` becomes `["integer", "null"]`, which is how OpenAPI 3.1 states a nullable type. A `DateTimeInterface` becomes a `date-time` string. A property is required when its type forbids null and the class gives it no default, so `url`, `format` and `source` are required and the other two are not.
+That publishes an object with all seven properties and no schema to maintain. A backed enum becomes an `enum` of its case values. A nested object becomes a nested schema. `?string` becomes `["string", "null"]`, which is how OpenAPI 3.1 states a nullable type. A `DateTimeInterface` becomes a `date-time` string.
 
-The package states nothing that it cannot read. An untyped property, a union type and `mixed` carry no shape, so the schema leaves them out. An `array` property states `type: array` and no `items`, because a PHP array type does not name its member type. The schema never sets `additionalProperties: false`, so a property that the package left out reads as undocumented, and not as denied.
+**A property is required when the class gives it no default.** A type that allows null is not a default. `?string $session` states a key that the caller must supply and may set to null, so the schema requires it and types it `["string", "null"]`. JSON Schema keeps the two questions in different keywords, and so does the package. `url`, `format`, `source` and `session` are therefore required here, and the three with defaults are not.
+
+A PHP `array` type does not name its member type, so the package reads the docblock for it:
+
+| Docblock | Published |
+| --- | --- |
+| `list<Scoreline>` | `{"type": "array", "items": {…}}` |
+| `Scoreline[]` | the same |
+| `array<int, Scoreline>` | the same |
+| `array<string, int>` | `{"type": "object", "additionalProperties": {"type": "integer"}}` |
+| none | `{"type": "array"}`, with no `items` |
+
+A string key is a JSON object and any other key is a JSON array, so the two forms publish differently. The package resolves a class name in a docblock as the code around it does, through the `use` statements of the file. A generic of another kind, such as a collection class, states a container that the package does not model, and the property falls back to its declared type.
+
+The package states nothing else that it cannot read. An untyped property, a union type and `mixed` carry no shape, so the schema leaves them out. The schema never sets `additionalProperties: false`, so a property that the package left out reads as undocumented, and not as denied.
 
 A class that implements `JsonSerializable` chooses its own JSON, so its properties describe a different object from the one it publishes. The package refuses to reflect such a class, logs the reason, and asks for `ProvidesSchema`. A wrong schema is worse than no schema.
 

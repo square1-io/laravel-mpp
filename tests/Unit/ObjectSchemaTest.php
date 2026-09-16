@@ -3,6 +3,7 @@
 use Square1\Mpp\Discovery\ObjectSchema;
 use Square1\Mpp\Tests\Fakes\ClipResult;
 use Square1\Mpp\Tests\Fakes\CycleNode;
+use Square1\Mpp\Tests\Fakes\ImportedList;
 use Square1\Mpp\Tests\Fakes\SideEffectCounter;
 
 it('stops at a class that holds itself', function () {
@@ -27,6 +28,20 @@ it('marks a promoted property with a default as optional', function () {
     // that `cached` and `tags` are required, which they are not.
     $schema = ObjectSchema::fromClass(ClipResult::class);
 
-    expect($schema['required'])->toBe(['url', 'format', 'source'])
+    expect($schema['required'])->toBe(['url', 'format', 'source', 'session'])
         ->and($schema['properties'])->toHaveKey('cached');
+});
+
+it('resolves a class that the docblock names through an import', function () {
+    // The docblock writes `Stamp`, which the file imports as an alias of
+    // DateTimeImmutable. The reader applies the same rules as PHP.
+    expect(ObjectSchema::fromClass(ImportedList::class))->toBe([
+        'type' => 'object',
+        'properties' => [
+            'stamps' => [
+                'type' => 'array',
+                'items' => ['type' => 'string', 'format' => 'date-time'],
+            ],
+        ],
+    ]);
 });
