@@ -152,10 +152,9 @@ final class ServiceInfo
             return null;
         }
 
-        // The link is absolute, or it is protocol-relative. A
-        // protocol-relative link carries its own host, so the method must not
-        // change its base.
-        if (str_starts_with($url, '//') || preg_match('#^[a-z][a-z0-9+.\-]*:#i', $url) === 1) {
+        // The link already carries a scheme, so it is a URI and resolves
+        // against nothing.
+        if (preg_match('#^[a-z][a-z0-9+.\-]*:#i', $url) === 1) {
             return $url;
         }
 
@@ -165,7 +164,94 @@ final class ServiceInfo
             return $url;
         }
 
-        return rtrim($base, '/').'/'.ltrim($url, '/');
+        return self::resolveReference($base, $url);
+    }
+
+    /**
+     * Resolves a reference against a base URI, as RFC 3986 §5.3 defines it.
+     *
+     * The rules that matter here are the ones a site owner meets when the
+     * `servers` URL carries a path, such as `https://example.com/api`:
+     *
+     *   //cdn.example.com/x  takes the scheme of the base, and its own host
+     *   /llms.txt            resolves against the ROOT of the host, and drops
+     *                        the path of the base
+     *   llms.txt             resolves against the directory of the base path
+     *
+     * An earlier version appended every form to the base, which placed
+     * `/llms.txt` inside the path prefix and published a link to a document
+     * that is not there.
+     */
+    private static function resolveReference(string $base, string $reference): string
+    {
+        $parts = parse_url($base);
+
+        if (! isset($parts['scheme'], $parts['host'])) {
+            // The base is not a URI, so there is nothing to resolve against.
+            return $reference;
+        }
+
+        // A network-path reference carries its own authority and takes only
+        // the scheme of the base.
+        if (str_starts_with($reference, '//')) {
+            return $parts['scheme'].':'.$reference;
+        }
+
+        $origin = $parts['scheme'].'://'.$parts['host']
+            .(isset($parts['port']) ? ':'.$parts['port'] : '');
+
+        // A query or a fragment on its own keeps the whole path of the base.
+        if (str_starts_with($reference, '?') || str_starts_with($reference, '#')) {
+            return $origin.($parts['path'] ?? '').$reference;
+        }
+
+        // An absolute-path reference replaces the path of the base.
+        if (str_starts_with($reference, '/')) {
+            return $origin.self::removeDotSegments($reference);
+        }
+
+        // A relative-path reference merges with the directory of the base
+        // path, which is the base path without its last segment.
+        $path = $parts['path'] ?? '';
+        $directory = substr($path, 0, (int) strrpos($path, '/') + 1);
+
+        return $origin.self::removeDotSegments(($directory === '' ? '/' : $directory).$reference);
+    }
+
+    /**
+     * Removes the `.` and `..` segments from a path, as RFC 3986 §5.2.4
+     * defines it.
+     *
+     * A config can reasonably write `../docs`, and a published link must not
+     * carry a segment that a client has to resolve for itself.
+     */
+    private static function removeDotSegments(string $path): string
+    {
+        $output = [];
+
+        foreach (explode('/', $path) as $segment) {
+            if ($segment === '.') {
+                continue;
+            }
+
+            if ($segment === '..') {
+                array_pop($output);
+
+                continue;
+            }
+
+            $output[] = $segment;
+        }
+
+        $resolved = implode('/', $output);
+
+        // A path that ends in `.` or `..` keeps its trailing slash, because it
+        // named a directory.
+        if (str_ends_with($path, '/.') || str_ends_with($path, '/..')) {
+            $resolved .= '/';
+        }
+
+        return $resolved === '' ? '/' : $resolved;
     }
 
     /**

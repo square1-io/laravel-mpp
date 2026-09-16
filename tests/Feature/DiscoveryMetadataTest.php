@@ -2,6 +2,7 @@
 
 use Illuminate\Support\Facades\Log;
 use Square1\Mpp\Tests\Fakes\DocumentStage;
+use Square1\Mpp\Tests\Fakes\SideEffectCounter;
 
 // ── Service-level metadata (x-service-info, info, servers) ───────────────────
 
@@ -390,15 +391,55 @@ it('makes a relative documentation link absolute against the service URL', funct
     ]);
 });
 
-it('leaves an absolute or protocol-relative documentation link alone', function () {
+it('leaves an absolute link alone, and gives a protocol-relative one a scheme', function () {
     config()->set('mpp.discovery.servers', ['https://mpp.example.test']);
     config()->set('mpp.discovery.docs.homepage', 'https://docs.example.test/guide');
     config()->set('mpp.discovery.docs.llms', '//cdn.example.test/llms.txt');
 
+    // A protocol-relative link carries its own host and takes the scheme of
+    // the base, as RFC 3986 §5.3 states. It has no scheme of its own, so
+    // publishing it as written would fail the `format: uri` of the draft.
     expect($this->get('/openapi.json')->json('x-service-info.docs'))->toBe([
         'homepage' => 'https://docs.example.test/guide',
-        'llms' => '//cdn.example.test/llms.txt',
+        'llms' => 'https://cdn.example.test/llms.txt',
     ]);
+});
+
+it('resolves a documentation link against a server URL that carries a path', function () {
+    config()->set('mpp.discovery.servers', ['https://example.test/api']);
+    config()->set('mpp.discovery.docs.homepage', '/');
+    config()->set('mpp.discovery.docs.api_reference', 'reference');
+    config()->set('mpp.discovery.docs.llms', '/llms.txt');
+
+    // A reference that starts with a slash resolves against the root of the
+    // host, and drops the path of the base. A reference without one resolves
+    // against the directory of the base path. An earlier version appended both
+    // forms to the base, and published `/api/llms.txt` for a file at the root.
+    expect($this->get('/openapi.json')->json('x-service-info.docs'))->toBe([
+        'homepage' => 'https://example.test/',
+        'apiReference' => 'https://example.test/reference',
+        'llms' => 'https://example.test/llms.txt',
+    ]);
+});
+
+it('resolves a relative link inside a server path that ends in a slash', function () {
+    config()->set('mpp.discovery.servers', ['https://example.test/api/']);
+    config()->set('mpp.discovery.docs.llms', 'llms.txt');
+
+    // `servers()` trims a trailing slash from a plain string, so state the
+    // directory form through the full OpenAPI shape to keep it.
+    config()->set('mpp.discovery.servers', [['url' => 'https://example.test/api/']]);
+
+    expect($this->get('/openapi.json')->json('x-service-info.docs.llms'))
+        ->toBe('https://example.test/api/llms.txt');
+});
+
+it('removes dot segments from a resolved link', function () {
+    config()->set('mpp.discovery.servers', [['url' => 'https://example.test/api/v2/']]);
+    config()->set('mpp.discovery.docs.llms', '../llms.txt');
+
+    expect($this->get('/openapi.json')->json('x-service-info.docs.llms'))
+        ->toBe('https://example.test/api/llms.txt');
 });
 
 // ── Free routes ─────────────────────────────────────────────────────────────
@@ -483,4 +524,91 @@ it('lets a route say false where a lower-precedence source said true', function 
     ];
 
     expect($this->get('/openapi.json')->json('paths'))->toHaveKey('/free/redirect/{slug}');
+});
+
+// ── Typed path parameters, query rules and schema classes ───────────────────
+
+it('types a path parameter from the type-hint of the action', function () {
+    // `item(int $id)` states the type. Every path segment is a string on the
+    // wire, and OpenAPI still lets the parameter declare what it holds.
+    expect($this->get('/openapi.json')->json('paths./doc/item/{id}.get.parameters'))->toBe([
+        ['name' => 'id', 'in' => 'path', 'required' => true, 'schema' => ['type' => 'integer']],
+    ]);
+});
+
+it('types a path parameter from a whereNumber constraint', function () {
+    // `whereNumber()` assigns `[0-9]+`, which matches digits and nothing else.
+    // The type carries what the pattern stated, so the package omits the
+    // pattern.
+    expect($this->get('/openapi.json')->json('paths./doc/tick/{n}.get.parameters'))->toBe([
+        ['name' => 'n', 'in' => 'path', 'required' => true, 'schema' => ['type' => 'integer']],
+    ]);
+});
+
+it('keeps a bounded constraint as a string with a pattern', function () {
+    // `[0-9]{4}` states a length as well as a type, and only a string schema
+    // keeps both.
+    expect($this->get('/openapi.json')->json('paths./doc/report/{year}.get.parameters.0.schema'))
+        ->toBe(['type' => 'string', 'pattern' => '^(?:[0-9]{4})$']);
+});
+
+it('derives query parameters from a FormRequest on a GET action', function () {
+    $operation = $this->get('/openapi.json')->json('paths./doc/report-query.get');
+
+    // The rules describe the query string, not a body, so they become
+    // parameters and the operation declares no requestBody.
+    expect($operation)->not->toHaveKey('requestBody');
+
+    expect($operation['parameters'])->toBe([
+        ['required' => true, 'schema' => ['type' => 'string', 'enum' => ['json', 'csv']], 'name' => 'format', 'in' => 'query'],
+        ['required' => false, 'schema' => ['type' => 'integer', 'minimum' => 1], 'name' => 'page', 'in' => 'query'],
+        ['required' => false, 'schema' => ['type' => ['string', 'null'], 'format' => 'date-time'], 'name' => 'since', 'in' => 'query'],
+    ]);
+});
+
+it('leaves a nested rule out of the query parameters', function () {
+    // `filter.status` needs an OpenAPI serialization style that the rules do
+    // not state, so the package omits it rather than choose one.
+    $names = array_column($this->get('/openapi.json')->json('paths./doc/report-query.get.parameters'), 'name');
+
+    expect($names)->not->toContain('filter');
+});
+
+it('resolves a class name inside a response status map', function () {
+    $responses = $this->get('/openapi.json')->json('paths./doc/score.get.responses');
+
+    expect($responses['200']['content']['application/json']['schema'])
+        ->toBe(['type' => 'object', 'required' => ['score'], 'properties' => ['score' => ['type' => 'integer']]])
+        ->and($responses['404']['content']['application/json']['schema'])
+        ->toBe(['type' => 'object', 'properties' => ['error' => ['type' => 'string']]])
+        ->and($responses)->toHaveKey('402');
+});
+
+it('describes a response it cannot resolve without claiming a shape', function () {
+    Log::spy();
+
+    config()->set('mpp.discovery.operations', [
+        'doc.named' => ['response' => ['200' => 'App\\Missing']],
+    ]);
+
+    // An empty `schema: {}` would state a shape that nobody described. The
+    // response still belongs in the document, because the route returns it.
+    expect($this->get('/openapi.json')->json('paths./doc/named.get.responses.200'))
+        ->toBe(['description' => 'Successful response']);
+
+    Log::shouldHaveReceived('warning')
+        ->withArgs(fn (string $message) => str_contains($message, 'App\\Missing'));
+});
+
+it('reports a class that states no schema at all', function () {
+    Log::spy();
+
+    config()->set('mpp.discovery.operations', [
+        'doc.named' => ['response' => SideEffectCounter::class],
+    ]);
+
+    $this->get('/openapi.json')->assertOk();
+
+    Log::shouldHaveReceived('warning')
+        ->withArgs(fn (string $message) => str_contains($message, 'ProvidesSchema'));
 });

@@ -31,6 +31,8 @@ use Square1\Mpp\Attributes\DiscoveryInfo;
  */
 final class OperationInfoResolver
 {
+    public function __construct(private readonly SchemaResolver $schemas = new SchemaResolver) {}
+
     public function for(Route $route): OperationInfo
     {
         $attribute = RouteAction::attribute($route, DiscoveryInfo::class);
@@ -83,17 +85,22 @@ final class OperationInfoResolver
             ? $this->fromDocBlock($reflection)
             : [null, null];
 
+        $formRequest = config('mpp.discovery.form_requests', true)
+            ? $this->formRequest($reflection)
+            : null;
+
+        // The rules of a FormRequest describe whatever the action validates. On
+        // a verb that carries a body, that is the body. On a verb that does
+        // not, it is the query string. The same rule set therefore becomes a
+        // request body or a set of query parameters, and never both.
+        $carriesBody = $this->carriesBody($route);
+
         return new OperationInfo(
             summary: $summary,
             description: $description,
             operationId: $this->operationId($route),
-            // This applies only to a verb that carries a body. A GET action
-            // can type-hint a FormRequest to validate its query string. To
-            // publish those rules as a request BODY would describe a request
-            // that no client is to send.
-            request: config('mpp.discovery.form_requests', true) && $this->carriesBody($route)
-                ? $this->formRequest($reflection)
-                : null,
+            request: $carriesBody ? $formRequest : null,
+            query: $carriesBody ? [] : $this->schemas->queryParameters($formRequest),
         );
     }
 

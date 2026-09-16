@@ -257,6 +257,7 @@ class DiscoveryDocument
     {
         $uri = '/'.ltrim($route->uri(), '/');
         $wheres = $route->wheres;
+        $types = RouteAction::scalarTypes($route);
 
         preg_match_all('/\{\s*(\w+)\s*(\?)?\s*\}/', $uri, $matches, PREG_SET_ORDER | PREG_OFFSET_CAPTURE);
 
@@ -280,6 +281,7 @@ class DiscoveryDocument
                 true,
                 $meta->parameters[$name] ?? null,
                 is_string($wheres[$name] ?? null) ? $wheres[$name] : null,
+                $types[$name] ?? null,
             );
         }
 
@@ -300,7 +302,7 @@ class DiscoveryDocument
         foreach ($meta->query as $name => $stated) {
             $required = is_array($stated) && ($stated['required'] ?? false) === true;
 
-            $parameters[] = $this->parameter((string) $name, 'query', $required, $stated, null);
+            $parameters[] = $this->parameter((string) $name, 'query', $required, $stated, null, null);
         }
 
         return $parameters;
@@ -316,11 +318,13 @@ class DiscoveryDocument
      * @param  string|array<string, mixed>|null  $stated
      * @return array<string, mixed>
      */
-    private function parameter(string $name, string $in, bool $required, string|array|null $stated, ?string $pattern): array
+    private function parameter(string $name, string $in, bool $required, string|array|null $stated, ?string $pattern, ?string $type): array
     {
-        $schema = ['type' => 'string'];
+        $schema = ['type' => $this->parameterType($pattern, $type)];
 
-        if ($pattern !== null && $pattern !== '') {
+        // A `pattern` constrains a string. It means nothing on a number, and
+        // the type already carries what the constraint stated.
+        if ($schema['type'] === 'string' && $pattern !== null && $pattern !== '') {
             // Laravel matches a `where()` constraint against the whole
             // segment. A JSON Schema `pattern` is a search unless it is
             // anchored. The package therefore anchors a constraint that is not
@@ -343,6 +347,43 @@ class DiscoveryDocument
         }
 
         return $parameter;
+    }
+
+    /**
+     * Returns the JSON Schema type for a parameter.
+     *
+     * Every path segment is a string on the wire, and OpenAPI still allows a
+     * parameter to declare a primitive type. Two signals state one, and either
+     * is enough:
+     *
+     *   - the action type-hints the argument, as in `show(int $id)`. Laravel
+     *     casts the segment to that type before the action runs.
+     *   - a `where()` constraint matches digits and nothing else, which is what
+     *     `whereNumber()` assigns.
+     *
+     * The type-hint decides first, because it is unambiguous. A constraint
+     * decides only when it is open-ended, such as `[0-9]+`. A bounded
+     * constraint such as `[0-9]{4}` states a length as well as a type, and a
+     * `pattern` on a string keeps both.
+     */
+    private function parameterType(?string $pattern, ?string $type): string
+    {
+        $fromHint = match ($type) {
+            'int' => 'integer',
+            'float' => 'number',
+            'bool' => 'boolean',
+            default => null,
+        };
+
+        if ($fromHint !== null) {
+            return $fromHint;
+        }
+
+        if ($pattern !== null && preg_match('/^(\[0-9\]|\\d)[+*]$/', $pattern) === 1) {
+            return 'integer';
+        }
+
+        return 'string';
     }
 
     /**

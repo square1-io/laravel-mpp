@@ -18,8 +18,8 @@ use Illuminate\Support\Facades\Log;
  *     short form cannot express, such as several media types, `$ref`, or
  *     examples;
  *   - a class name. The class is a `FormRequest`, whose `rules()` already
- *     describe the input, or a class of your own with a `schema()` method that
- *     returns an array.
+ *     describe the input, or a class of your own that implements
+ *     {@see ProvidesSchema}.
  *
  * The class logs a schema that it cannot resolve, and leaves it out. The
  * document stays advisory. An incorrect schema reference costs the operation
@@ -96,8 +96,14 @@ final class SchemaResolver
         $responses = [];
 
         foreach ($stated as $status => $schema) {
+            // A status map takes the same three forms as `response` itself: an
+            // inline array, a full response object, or the name of a class.
+            // Without this, a class name reached response() as a string, and
+            // the operation published an empty schema as though it were real.
+            $entry = is_string($schema) ? $this->resolve($schema, 'response') : $schema;
+
             $responses[(string) $status] = $this->response(
-                is_array($schema) ? $schema : [],
+                is_array($entry) ? $entry : [],
                 ((string) $status)[0] === '2' ? 'Successful response' : 'Error response',
             );
         }
@@ -117,6 +123,13 @@ final class SchemaResolver
      */
     private function response(array $stated, string $fallbackDescription): array
     {
+        if ($stated === []) {
+            // Nothing described this response. It still belongs in the
+            // document, because the operation returns it, but an empty
+            // `schema: {}` would claim a shape that nobody stated.
+            return ['description' => $fallbackDescription];
+        }
+
         if (isset($stated['content']) || isset($stated['description'])) {
             // The stated description wins. The fallback fills only a response
             // that named its content and did not describe it. OpenAPI requires
@@ -152,6 +165,49 @@ final class SchemaResolver
         }
 
         return true;
+    }
+
+    /**
+     * Returns the query parameters that the rules of a class describe.
+     *
+     * A GET or DELETE action can type-hint a FormRequest to validate its query
+     * string. Those rules describe the query, and not a request body, so the
+     * package publishes them as `in: query` parameters.
+     *
+     * Only a scalar rule becomes a parameter. A nested object or an array needs
+     * an OpenAPI serialization style, such as `deepObject`, which the rules
+     * themselves do not state. The package leaves those out rather than choose
+     * a style for you.
+     *
+     * @param  class-string|array<string, mixed>|null  $request
+     * @return array<string, array<string, mixed>> parameter name => stated parameter
+     */
+    public function queryParameters(string|array|null $request): array
+    {
+        $schema = $this->resolve($request, 'request');
+
+        if ($schema === null || ($schema['properties'] ?? []) === []) {
+            return [];
+        }
+
+        $required = (array) ($schema['required'] ?? []);
+        $parameters = [];
+
+        foreach ($schema['properties'] as $name => $property) {
+            $type = $property['type'] ?? null;
+            $type = is_array($type) ? ($type[0] ?? null) : $type;
+
+            if ($type === 'object' || $type === 'array' || isset($property['properties'])) {
+                continue;
+            }
+
+            $parameters[(string) $name] = [
+                'required' => in_array($name, $required, true),
+                'schema' => $property,
+            ];
+        }
+
+        return $parameters;
     }
 
     /**
@@ -199,27 +255,23 @@ final class SchemaResolver
      */
     private function fromClass(string $class): ?array
     {
-        // The method builds the class WITHOUT the container, on purpose. The
-        // container fires Laravel's `ValidatesWhenResolved` hook for a
-        // FormRequest. That hook runs the validator, and the validator fails.
+        // A class of your own states its shape through the interface. The
+        // method is static, so the package reads the schema without building
+        // the class.
+        if (is_subclass_of($class, ProvidesSchema::class)) {
+            return $class::schema();
+        }
+
+        // A FormRequest belongs to Laravel and cannot implement the interface,
+        // so it is the one explicit exception. The package builds it WITHOUT
+        // the container, because the container fires Laravel's
+        // `ValidatesWhenResolved` hook, which runs the validator and fails.
         // Discovery needs only the rule set that the class declares.
-        $instance = new $class;
-
-        if (method_exists($instance, 'schema')) {
-            $schema = $instance->schema();
-
-            return is_array($schema) ? $schema : null;
+        if (is_subclass_of($class, FormRequest::class)) {
+            return ValidationSchema::fromRules((array) (new $class)->rules());
         }
 
-        // The test is for a FormRequest, not for any class with a `rules()`
-        // method. `rules()` is a common method name. To read it from a policy
-        // or a value object would publish data that was never a request shape.
-        // A class of your own declares a schema with `schema()`.
-        if ($instance instanceof FormRequest) {
-            return ValidationSchema::fromRules((array) $instance->rules());
-        }
-
-        Log::warning("[mpp] Discovery could not read a schema from '{$class}': it is not a FormRequest and has no schema() method.");
+        Log::warning("[mpp] Discovery could not read a schema from '{$class}'. A class states its schema by implementing ".ProvidesSchema::class.', and a FormRequest states it through rules().');
 
         return null;
     }

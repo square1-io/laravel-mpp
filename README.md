@@ -465,7 +465,9 @@ MPP_DISCOVERY_LLMS=https://example.com/llms.txt
 
 `servers` follows `APP_URL` until you set `mpp.discovery.servers`. Set it when another host serves the API, or when a path prefix does. The contact and licence details are in `config/mpp.php`. The package omits an empty value, and does not publish it blank.
 
-You can write a documentation link as a relative link, such as `/llms.txt`. The package publishes it as an absolute link, against your service URL. The draft types these links `format: uri`, and requires conformance with RFC 3986. A relative reference therefore fails a strict validator. A registry that stored `"/"` also has nothing to follow.
+You can write a documentation link as a relative link, such as `/llms.txt`. The package publishes it as an absolute link, resolved against your service URL as RFC 3986 §5.3 defines. The draft types these links `format: uri` and requires RFC 3986 conformance, so a relative reference fails a strict validator. A registry that stored `"/"` also has nothing to follow.
+
+The resolution rules matter when your `servers` URL carries a path, such as `https://example.com/api`. A link that starts with a slash resolves against the root of the host and drops that path, so `/llms.txt` becomes `https://example.com/llms.txt`. A link without one resolves against the directory of the base path. A protocol-relative link such as `//cdn.example.com/llms.txt` keeps its own host and takes the scheme of the base.
 
 The two response headers that the draft recommends are on by default. They are `Cache-Control: public, max-age=300` and `Access-Control-Allow-Origin: *`. Set `mpp.discovery.cache_control` or `mpp.discovery.allow_origin` to `null` to omit either one.
 
@@ -543,11 +545,13 @@ public function rules(): array
 
 Those rules become types, formats, bounds, enumerations, nesting and requiredness in the published `requestBody`.
 
+On a verb that carries no body, the same rules describe the query string instead, so the package publishes them as `in: query` parameters. A `GET` action that type-hints a `FormRequest` therefore documents its query without further work. A nested rule such as `filter.status` needs an OpenAPI serialization style that the rules do not state, so the package leaves those out rather than choose one.
+
 A rule that states a database fact rather than a shape, such as `unique` or `exists`, contributes nothing. The package ignores a rule that it does not recognise, and does not infer a meaning for it. The 422 response stays authoritative for the rest, in the same way as the 402 response does for the price.
 
 Set `MPP_DISCOVERY_FORM_REQUESTS=false` to turn this off. Each operation then falls back to the permissive `{"type": "object"}` body that the package has always emitted.
 
-`request` and `response` also take a JSON Schema array, a full OpenAPI `requestBody` or response array, or the name of any class with a `schema()` method. `response` takes a plain schema for the 200 response, or a map keyed by status code:
+`request` and `response` also take a JSON Schema array, a full OpenAPI `requestBody` or response array, or the name of a class. `response` takes a plain schema for the 200 response, or a map keyed by status code, and every entry of that map takes the same three forms:
 
 ```php
 #[DiscoveryInfo(response: [
@@ -555,6 +559,28 @@ Set `MPP_DISCOVERY_FORM_REQUESTS=false` to turn this off. Each operation then fa
     '404' => ['description' => 'No such video.'],
 ])]
 ```
+
+An inline array is the shortest form for a small shape, and the wrong form for a shape that several routes share, or for one long enough to hide the rest of the attribute. A class states a longer shape, and implements `ProvidesSchema`:
+
+```php
+use Square1\Mpp\Discovery\ProvidesSchema;
+
+final class ScoreSchema implements ProvidesSchema
+{
+    public static function schema(): array
+    {
+        return [
+            'type' => 'object',
+            'required' => ['score'],
+            'properties' => ['score' => ['type' => 'integer']],
+        ];
+    }
+}
+
+#[DiscoveryInfo(response: ['200' => ScoreSchema::class, '404' => NotFound::class])]
+```
+
+The method is static, so the package reads a schema without building the class. A `FormRequest` cannot implement the interface, because it belongs to Laravel, so the package reads its `rules()` instead. Those are the only two forms a class name takes; the package logs anything else and leaves the schema out.
 
 The package logs a schema that it cannot resolve, and leaves it out. The document is advisory. An incorrect schema reference costs the operation its schema. It never costs the operation its entry, and it never stops the route from charging.
 
@@ -564,6 +590,7 @@ You write nothing at all for some of the document:
 
 - The **name** of a route becomes its `operationId`. The package omits the id when a route serves several verbs or several paths, because OpenAPI requires the id to be unique.
 - The package declares the **path parameters**, and carries a `where()` constraint across as an anchored `pattern`. An optional Laravel parameter, such as the one in `/report/{year}/{month?}`, becomes two OpenAPI paths and not one optional parameter. An OpenAPI path parameter is always required.
+- A path parameter states a **type** when either of two signals gives one. The action can type-hint the argument, as in `show(int $id)`. A `where()` constraint can also match digits and nothing else, which is what `whereNumber()` assigns. A bounded constraint such as `[0-9]{4}` states a length as well as a type, so it stays a string with a `pattern`, which keeps both.
 - A **docblock** on the action becomes the `summary` and the `description` of the operation. The first paragraph is the summary, and the rest is the description. The package drops the annotation tags. This is **off by default**. An author writes a docblock for colleagues, and it can state things that you would not publish to an unauthenticated endpoint that registries crawl. Read your docblocks, and then set `MPP_DISCOVERY_DOCBLOCKS=true`.
 
 ### Free Routes

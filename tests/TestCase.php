@@ -204,6 +204,18 @@ abstract class TestCase extends OrchestraTestCase
         Route::get('/doc/report/{year}/{month?}', fn () => response('REPORT', 200))
             ->middleware('mpp:0.50,USD')->where('year', '[0-9]{4}');
 
+        // A typed path parameter, and a `whereNumber()` constraint on a closure
+        // route, so the document can state an integer rather than a string.
+        Route::get('/doc/item/{id}', [DocumentedController::class, 'item'])->middleware('mpp');
+        Route::get('/doc/tick/{n}', fn () => response('TICK', 200))
+            ->middleware('mpp:0.50,USD')->whereNumber('n');
+
+        // A GET action whose FormRequest validates the query string.
+        Route::get('/doc/report-query', [DocumentedController::class, 'report'])->middleware('mpp');
+
+        // A response map whose entries are class names.
+        Route::get('/doc/score', [DocumentedController::class, 'score'])->middleware('mpp');
+
         // ── Free routes ──────────────────────────────────────────────────────
         // Not payment-gated. Listed only when `mpp.discovery.include` names them.
         Route::get('/free/redirect/{slug}', fn () => redirect('/'))->name('free.redirect');

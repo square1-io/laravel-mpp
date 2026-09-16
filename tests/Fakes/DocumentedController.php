@@ -54,4 +54,34 @@ class DocumentedController
     {
         return response()->json(['ok' => true]);
     }
+
+    /**
+     * An action that type-hints its path parameter, so the published parameter
+     * can state a type rather than the string that every segment is on the
+     * wire.
+     */
+    #[RequiresPayment(amount: '0.50', currency: 'USD')]
+    public function item(int $id): JsonResponse
+    {
+        return response()->json(['id' => $id]);
+    }
+
+    /**
+     * A GET action whose FormRequest validates the query string.
+     */
+    #[RequiresPayment(amount: '0.50', currency: 'USD')]
+    public function report(ReportQuery $request): JsonResponse
+    {
+        return response()->json(['report' => 'ok']);
+    }
+
+    #[RequiresPayment(amount: '0.50', currency: 'USD')]
+    #[DiscoveryInfo(response: [
+        '200' => ScoreSchema::class,
+        '404' => NotFoundSchema::class,
+    ])]
+    public function score(): JsonResponse
+    {
+        return response()->json(['score' => 1]);
+    }
 }

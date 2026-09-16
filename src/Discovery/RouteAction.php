@@ -7,6 +7,7 @@ use Illuminate\Routing\Route;
 use ReflectionFunction;
 use ReflectionFunctionAbstract;
 use ReflectionMethod;
+use ReflectionNamedType;
 
 /**
  * Reflects over the action that a route runs.
@@ -75,5 +76,40 @@ final class RouteAction
         }
 
         return $attributes === [] ? null : $attributes[0]->newInstance();
+    }
+
+    /**
+     * Returns the built-in types that the action type-hints, by parameter name.
+     *
+     * A path parameter reaches the action as an argument, so `match(int $id)`
+     * states that `{id}` is an integer. The package types the published
+     * parameter from that, rather than from the string that every path segment
+     * is on the wire.
+     *
+     * The method returns only a built-in type. A class type-hint is route-model
+     * binding, and the class states nothing about the shape of the segment that
+     * the client sends.
+     *
+     * @return array<string, string> parameter name => built-in type name
+     */
+    public static function scalarTypes(Route $route): array
+    {
+        $reflection = self::reflect($route);
+
+        if ($reflection === null) {
+            return [];
+        }
+
+        $types = [];
+
+        foreach ($reflection->getParameters() as $parameter) {
+            $type = $parameter->getType();
+
+            if ($type instanceof ReflectionNamedType && $type->isBuiltin()) {
+                $types[$parameter->getName()] = $type->getName();
+            }
+        }
+
+        return $types;
     }
 }
