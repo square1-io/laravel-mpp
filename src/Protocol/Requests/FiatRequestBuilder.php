@@ -7,17 +7,18 @@ use Square1\Mpp\Payment\PaymentSpec;
 use Square1\Mpp\Support\Money;
 
 /**
- * Request payload for fiat rails (draft-stripe-charge shape): amount in the
- * currency's minor units as a string, lowercase ISO currency, and rail
- * identity in methodDetails. The default builder for any method that does not
- * name its own.
+ * The request payload for a fiat rail, in the shape of draft-stripe-charge.
  *
- * The Stripe charge method requires both `networkId` and `paymentMethodTypes`
- * in methodDetails; {@see MethodConfigValidator} makes them
- * required config for the Stripe rail, so a stripe challenge always carries
- * both by the time it reaches here. Any other fiat rail using this builder gets
- * whichever of the two it configured, and no methodDetails at all if neither —
- * an empty methodDetails object is never emitted.
+ * The payload carries the amount in the minor units of the currency as a string,
+ * the ISO currency in lower case, and the identity of the rail in methodDetails.
+ * This is the default builder for a method that does not name its own builder.
+ *
+ * The Stripe charge method requires both `networkId` and `paymentMethodTypes` in
+ * methodDetails. {@see MethodConfigValidator} makes them required config for the
+ * Stripe rail, so a stripe challenge always carries both when it reaches this
+ * class. Another fiat rail that uses this builder receives whichever of the two
+ * values it configured. When it configured neither, the builder emits no
+ * methodDetails at all, because it never emits an empty methodDetails object.
  */
 class FiatRequestBuilder implements RailRequestBuilder
 {
@@ -32,8 +33,9 @@ class FiatRequestBuilder implements RailRequestBuilder
 
         $details = array_filter([
             'networkId' => $config['network_id'] ?? null,
-            // A JSON array on the wire, never an object: reindex so a config
-            // written with explicit keys still renders as a list.
+            // This value is a JSON array on the wire, and never an object. Reindex
+            // it, so that a config written with explicit keys still renders as a
+            // list.
             'paymentMethodTypes' => is_array($types) ? array_values($types) : null,
         ], fn ($v) => $v !== null && $v !== []);
 

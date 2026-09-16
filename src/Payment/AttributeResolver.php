@@ -9,9 +9,12 @@ use Square1\Mpp\Attributes\RequiresPayment;
 use Throwable;
 
 /**
- * Reads the #[RequiresPayment] attribute from a matched route's controller
- * action (method-level first, then class-level for invokable/whole controllers).
- * Returns null for closures or unattributed actions.
+ * Reads the #[RequiresPayment] attribute from the controller action of a matched
+ * route.
+ *
+ * The class reads the attribute of the method first, and then the attribute of
+ * the class, which covers an invokable class or a whole controller. It returns
+ * null for a closure, and for an action with no attribute.
  */
 class AttributeResolver
 {

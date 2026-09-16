@@ -13,25 +13,31 @@ use Square1\Mpp\Support\Evm\TempoTransaction;
 use Throwable;
 
 /**
- * Verifies a Tempo credential against the stored challenge, then settles it on-chain.
+ * Verifies a Tempo credential against the stored challenge, and then settles it
+ * on-chain.
  *
- * The client signs a COMPLETE transaction (a pathUSD transfer to the challenged
- * recipient) and pays its own gas. The server holds no key and no gas account.
- * It only:
+ * The client signs a COMPLETE transaction, which is a pathUSD transfer to the
+ * challenged recipient, and the client pays its own gas. The server holds no key
+ * and no gas account. The server does only the following:
  *
- *   (a) confirms the echoed challenge is one we issued and is unexpired (the
- *       caller looks it up in the store; we re-check expiry + the echoed request
- *       matches the stored state),
- *   (b) decodes the signed transaction and checks its transfer call pays the
- *       challenged amount of the challenged token to the challenged recipient,
- *   (c) checks the transfer carries the exact memo THIS challenge advertised
- *       (so a transaction for one challenge cannot satisfy another),
- *   (d) broadcasts it and confirms it mined with status 0x1 to the required
- *       confirmation depth (delegated to the {@see SettlementChecker}),
- *   (e) returns the transaction hash as the settlement reference.
+ *   (a) It confirms that the echoed challenge is one that this server issued and
+ *       that it has not expired. The caller looks the challenge up in the store.
+ *       This class re-checks the expiry, and checks that the echoed request
+ *       matches the stored state.
+ *   (b) It decodes the signed transaction. It then checks that the transfer call
+ *       pays the challenged amount of the challenged token to the challenged
+ *       recipient.
+ *   (c) It checks that the transfer carries the exact memo that THIS challenge
+ *       advertised, so that a transaction for one challenge cannot satisfy
+ *       another challenge.
+ *   (d) It broadcasts the transaction and confirms that the transaction mined
+ *       with status 0x1, to the required confirmation depth. It delegates this
+ *       step to the {@see SettlementChecker}.
+ *   (e) It returns the transaction hash as the settlement reference.
  *
- * Every step FAILS CLOSED: any mismatch, an absent/reverted receipt, or an
- * expired/unknown challenge yields a failure, never a served resource.
+ * Every step FAILS CLOSED. A mismatch, an absent or reverted receipt, or an
+ * expired or unknown challenge produces a failure. The server never serves the
+ * resource after such a failure.
  */
 class TempoVerifier implements Verifier
 {
@@ -44,14 +50,16 @@ class TempoVerifier implements Verifier
     ) {}
 
     /**
-     * Verifier-interface entry point: adapt the spec-format Credential and
-     * Challenge onto the tempo verification pipeline. The stored Challenge is
-     * authoritative (the gate has already recomputed its binding); the
-     * credential's echoed request is still cross-checked byte-for-byte against
-     * it, so a client cannot answer challenge A with a payload minted for a
-     * differently-priced challenge B that shares an id prefix.
+     * The entry point of the Verifier interface. It adapts the Credential and
+     * the Challenge, in the spec format, onto the tempo verification steps.
      *
-     * @param  array<string, mixed>  $context  unused by the tempo rail
+     * The stored Challenge is authoritative, because the gate has already
+     * recomputed its binding. This class still compares the echoed request in the
+     * credential against it, byte for byte. A client therefore cannot answer
+     * challenge A with a payload that the server minted for a challenge B at a
+     * different price that shares an id prefix.
+     *
+     * @param  array<string, mixed>  $context  the tempo rail does not use this
      */
     public function verify(Credential $credential, Challenge $challenge, array $context = []): SettlementResult
     {
@@ -104,8 +112,9 @@ class TempoVerifier implements Verifier
 
     public function verifyTempo(ParsedTempoCredential $credential, TempoChallengeState $state): SettlementResult
     {
-        // (a) The challenge must be unexpired. (Existence/single-use is enforced
-        // by the caller via the ChallengeStore before we are invoked.)
+        // (a) The challenge must not have expired. The caller checks that the
+        // challenge exists, and enforces single use, through the ChallengeStore
+        // before it calls this class.
         if ($state->isExpired()) {
             return SettlementResult::failure('The challenge has expired.');
         }
@@ -118,14 +127,15 @@ class TempoVerifier implements Verifier
             return SettlementResult::failure('No signed transaction presented.');
         }
 
-        // The echoed request must match the issued challenge byte-for-byte on the
-        // economic fields (amount/token/recipient/chainId). A tampered request is
-        // a different challenge and must not settle.
+        // The echoed request must match the issued challenge byte for byte on
+        // the economic fields: the amount, the token, the recipient and the
+        // chainId. An altered request is a different challenge, and it must not
+        // settle.
         if (! $this->echoedRequestMatches($credential, $state)) {
             return SettlementResult::failure('The echoed challenge request does not match the issued challenge.');
         }
 
-        // (b) Decode the signed transaction and locate the transfer call.
+        // (b) Decode the signed transaction and find the transfer call.
         try {
             $tx = TempoTransaction::deserialize($credential->signature);
         } catch (InvalidArgumentException $e) {
@@ -142,11 +152,12 @@ class TempoVerifier implements Verifier
             return SettlementResult::failure('No transfer call paying the challenged amount of the challenged token to the challenged recipient was found.');
         }
 
-        // (c) The transfer must carry the exact memo this challenge advertised.
-        // The memo is a random per-challenge value bound into the challenge id
-        // HMAC, so an exact match binds the on-chain payment to this one
-        // challenge — a transfer minted for a different challenge carries a
-        // different memo and cannot settle here.
+        // (c) The transfer must carry the exact memo that this challenge
+        // advertised. The memo is a random value per challenge, and the
+        // challenge id HMAC binds it. An exact match therefore binds the
+        // on-chain payment to this one challenge. A transfer that the server
+        // minted for a different challenge carries a different memo, and it
+        // cannot settle here.
         $memo = $transfer['memo'];
         if ($memo === null) {
             return SettlementResult::failure('Transfer is missing the challenge-bound memo.');
@@ -156,8 +167,9 @@ class TempoVerifier implements Verifier
             return SettlementResult::failure('Transfer memo does not match the challenge memo.');
         }
 
-        // (d) Broadcast + confirm on-chain. The checker fails closed on revert,
-        // absent receipt, or unmatched logs.
+        // (d) Broadcast the transaction and confirm it on-chain. The checker
+        // fails closed on a revert, on an absent receipt, and on logs that do
+        // not match.
         $minConfirmations = max(1, (int) ($this->methodConfig['confirmations'] ?? 1));
 
         try {
@@ -188,7 +200,8 @@ class TempoVerifier implements Verifier
             return SettlementResult::failure('On-chain settlement returned no reference (tx hash).');
         }
 
-        // (e) Success — the tx hash is the settlement reference.
+        // (e) The transaction succeeded. The transaction hash is the settlement
+        // reference.
         return SettlementResult::settled(
             settlementRef: $outcome->settlementRef,
             amountMinor: $state->amount,
@@ -198,9 +211,11 @@ class TempoVerifier implements Verifier
     }
 
     /**
-     * Find the transfer call that pays the challenged amount of the challenged
-     * token to the challenged recipient. Mirrors mppx's `assertTransferCalls` /
-     * `decodeTransferCall`.
+     * Finds the transfer call that pays the challenged amount of the challenged
+     * token to the challenged recipient.
+     *
+     * The logic is the same as the `assertTransferCalls` and `decodeTransferCall`
+     * functions of mppx.
      *
      * @return array{recipient:string, amount:string, memo:?string}|null
      */
@@ -228,8 +243,9 @@ class TempoVerifier implements Verifier
     }
 
     /**
-     * Lower-case, 0x-prefixed form of a bytes32 memo, for a case- and
-     * prefix-insensitive exact comparison.
+     * Returns a bytes32 memo in lower case, with a 0x prefix.
+     *
+     * The form allows an exact comparison that ignores case and prefix.
      */
     private function normalizeMemo(string $memo): string
     {

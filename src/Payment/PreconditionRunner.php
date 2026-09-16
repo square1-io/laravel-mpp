@@ -7,21 +7,28 @@ use Square1\Mpp\Payment\Concerns\ResolvesNamedCallables;
 use Symfony\Component\HttpFoundation\Response;
 
 /**
- * Runs a route's preconditions before any challenge is minted or payment
- * settled, so a request that can never be fulfilled (a missing resource, a
- * blocked user) is rejected without charging. Global checks run first, then the
- * route's own, in declared order and de-duplicated. The first check that returns
- * a Response short-circuits; the rest do not run.
+ * Runs the preconditions of a route before the gate mints a challenge or settles
+ * a payment.
+ *
+ * The package therefore rejects a request that it can never fulfil, such as a
+ * request for a missing resource or a request from a blocked user, without a
+ * charge.
+ *
+ * The global checks run first, and then the checks of the route. Both run in the
+ * declared order, and the runner removes duplicates. The first check that
+ * returns a Response ends the run, and the rest do not run.
  *
  * Each name resolves from `mpp.preconditions.checks` to a [Class::class,
- * 'method'] pair (container-resolved, config:cache-safe) and is called with
- * (Request, PaymentSpec), returning a Response to reject or null to proceed.
- * An unknown name fails closed, so a typo can never silently skip a check.
+ * 'method'] pair. The container resolves the pair, so the list survives
+ * `config:cache`. The runner calls the pair with a Request and a PaymentSpec.
+ * The pair returns a Response to reject the request, or null to continue. An
+ * unknown name fails closed, so a typo cannot skip a check without a message.
  *
- * Driven by the PaymentPipeline rather than by a middleware, so a route gets its
- * checks however it was declared. When this lived in the `mpp` middleware, a
- * route auto-enforced from its #[RequiresPayment] attribute skipped them
- * silently, never passing through that middleware at all.
+ * The PaymentPipeline drives this class, and no middleware does. A route
+ * therefore gets its checks however a site owner declared it. When this logic
+ * lived in the `mpp` middleware, a route that the package enforced from its
+ * #[RequiresPayment] attribute skipped the checks without a message, because
+ * such a route never passes through that middleware.
  */
 class PreconditionRunner
 {

@@ -3,18 +3,19 @@
 namespace Square1\Mpp\Protocol\Tempo;
 
 /**
- * A parsed tempo credential: the echoed challenge fields, the
- * signed-transaction payload, and the payer DID source.
+ * A parsed tempo credential: the echoed challenge fields, the payload that holds
+ * the signed transaction, and the DID source of the payer.
  *
- * The `signature` is the COMPLETE signed Tempo transaction (a `0x76`/`0x78`
- * envelope), not an ECDSA signature — that is the spec's field name for a
- * `payload.type === 'transaction'` credential. The server decodes it, validates
- * its transfer call against the challenge, then broadcasts it.
+ * The `signature` is the COMPLETE signed Tempo transaction, in a `0x76` or
+ * `0x78` envelope. It is not an ECDSA signature. `signature` is the field name
+ * that the spec uses for a credential whose `payload.type` is `transaction`. The
+ * server decodes the transaction, validates its transfer call against the
+ * challenge, and then broadcasts it.
  */
 final class ParsedTempoCredential
 {
     /**
-     * @param  array<string, mixed>  $request  the decoded echoed mppx request object
+     * @param  array<string, mixed>  $request  the decoded mppx request object that the client echoed
      */
     public function __construct(
         public readonly string $challengeId,

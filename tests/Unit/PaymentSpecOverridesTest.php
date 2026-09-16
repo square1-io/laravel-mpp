@@ -86,29 +86,29 @@ it('rejects an override it cannot honour', function (array $overrides, string $m
     expect(fn () => spec()->with($overrides))
         ->toThrow(InvalidConfigurationException::class, $message);
 })->with([
-    'unknown key' => [['ammount' => '2.00'], 'unknown override(s): ammount'],
-    'every unknown key at once' => [['method' => 'tempo', 'nope' => 1], 'unknown override(s): method, nope'],
-    'a rail field the spec does hold' => [['offeredMethods' => ['tempo']], 'unknown override(s): offeredMethods'],
-    'zero amount' => [['amount' => '0.00'], "invalid 'amount' (0.00)"],
-    'negative amount' => [['amount' => '-2.00'], "invalid 'amount' (-2.00)"],
-    'empty amount' => [['amount' => ''], "invalid 'amount' ('')"],
-    'non-numeric amount' => [['amount' => 'free'], "invalid 'amount' (free)"],
-    'scientific notation amount' => [['amount' => '1e2'], "invalid 'amount' (1e2)"],
-    'explicitly signed amount' => [['amount' => '+2.00'], "invalid 'amount' (+2.00)"],
-    'null amount' => [['amount' => null], "non-numeric 'amount'"],
-    'non-boolean free' => [['free' => 'yes'], "non-boolean 'free'"],
+    'unknown key' => [['ammount' => '2.00'], 'cannot override: ammount'],
+    'every unknown key at once' => [['method' => 'tempo', 'nope' => 1], 'cannot override: method, nope'],
+    'a rail field the spec does hold' => [['offeredMethods' => ['tempo']], 'cannot override: offeredMethods'],
+    'zero amount' => [['amount' => '0.00'], "'amount' that is not valid (0.00)"],
+    'negative amount' => [['amount' => '-2.00'], "'amount' that is not valid (-2.00)"],
+    'empty amount' => [['amount' => ''], "'amount' that is not valid ('')"],
+    'non-numeric amount' => [['amount' => 'free'], "'amount' that is not valid (free)"],
+    'scientific notation amount' => [['amount' => '1e2'], "'amount' that is not valid (1e2)"],
+    'explicitly signed amount' => [['amount' => '+2.00'], "'amount' that is not valid (+2.00)"],
+    'null amount' => [['amount' => null], "'amount' that is not numeric"],
+    'non-boolean free' => [['free' => 'yes'], "'free' value that is not a boolean"],
     'free and amount together' => [['free' => true, 'amount' => '2.00'], "returned both 'free' => true and an 'amount'"],
     'empty currency' => [['currency' => '  '], "empty 'currency'"],
     'non-string currency' => [['currency' => 978], "empty 'currency'"],
-    'grants below one' => [['grants' => 0], "invalid 'grants'"],
-    'negative grants' => [['grants' => -5], "invalid 'grants'"],
-    'fractional grants' => [['grants' => '2.5'], "invalid 'grants'"],
+    'grants below one' => [['grants' => 0], "'grants' value that is not valid"],
+    'negative grants' => [['grants' => -5], "'grants' value that is not valid"],
+    'fractional grants' => [['grants' => '2.5'], "'grants' value that is not valid"],
     'empty scope' => [['scope' => ' '], "empty 'scope'"],
 ]);
 
 it('points a rejected amount at free => true rather than leaving it a mystery', function () {
     spec()->with(['amount' => '0']);
-})->throws(InvalidConfigurationException::class, "to waive the charge return `'free' => true` instead");
+})->throws(InvalidConfigurationException::class, "To waive the charge, return `'free' => true` instead.");
 
 it('allows free => false alongside an amount', function () {
     expect(spec()->with(['free' => false, 'amount' => '2.00']))

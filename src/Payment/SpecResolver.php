@@ -6,9 +6,11 @@ use Illuminate\Http\Request;
 use Square1\Mpp\Attributes\RequiresPayment;
 
 /**
- * Builds a PaymentSpec from either middleware arguments or a #[RequiresPayment]
- * attribute, filling defaults (method, network id, payment method types, and a
- * route-derived scope) from configuration.
+ * Builds a PaymentSpec from middleware arguments or from a #[RequiresPayment]
+ * attribute.
+ *
+ * The class fills the defaults from the configuration: the method, the network
+ * id, the payment method types, and a scope that it derives from the route.
  */
 class SpecResolver
 {
@@ -24,7 +26,7 @@ class SpecResolver
             $options = $this->parseOptions(array_slice($args, 1));
 
             return $this->build(
-                // A book entry may omit the amount too, if it carries resolvers.
+                // A book entry can omit the amount too, when it carries resolvers.
                 $entry['amount'] ?? $this->defaultAmount(),
                 strtoupper($entry['currency'] ?? $this->defaultCurrency()),
                 (int) ($options['grants'] ?? $entry['grants'] ?? $this->defaultGrants()),
@@ -40,8 +42,9 @@ class SpecResolver
             );
         }
 
-        // Positional args — amount, then currency — run until the first key=value
-        // option, so `mpp:scope=clip` (no positional) can inherit the global price.
+        // The positional arguments are the amount and then the currency. They
+        // end at the first key=value option. `mpp:scope=clip` has no positional
+        // argument, so it can inherit the global price.
         $positional = [];
         foreach ($args as $arg) {
             if (str_contains($arg, '=')) {
@@ -52,11 +55,13 @@ class SpecResolver
 
         $options = $this->parseOptions(array_slice($args, count($positional)));
 
-        // May be null: a route can leave pricing entirely to its resolvers. The
-        // pipeline is what insists a price exists, once they have had their say.
+        // The amount can be null, because a route can leave the price to its
+        // resolvers. The pipeline is the class that requires a price, after the
+        // resolvers have run.
         $amount = $positional[0] ?? $this->defaultAmount();
 
-        // A per-route override: `methods=stripe|other` (pipe-separated, ordered).
+        // This is a per-route override: `methods=stripe|other`, pipe-separated
+        // and ordered.
         $methods = $this->parseNamedList($options, 'methods') ?: null;
 
         return $this->build(
@@ -74,7 +79,7 @@ class SpecResolver
 
     public function fromAttribute(RequiresPayment $attribute, Request $request): PaymentSpec
     {
-        // Null is allowed here too — see fromMiddlewareArgs.
+        // Null is allowed here too. See fromMiddlewareArgs.
         $amount = $attribute->amount ?? $this->defaultAmount();
 
         return $this->build(
@@ -97,7 +102,8 @@ class SpecResolver
      */
     private function build(string|float|null $amount, string $currency, int $grants, ?string $scope, ?string $method, Request $request, ?array $methods = null, array $preconditions = [], array $pricing = []): PaymentSpec
     {
-        // Normalise "stated no price" to null; everything downstream tests for it.
+        // Normalise "stated no price" to null. Every later step tests for
+        // null.
         $amount = ($amount === null || $amount === '') ? null : (string) $amount;
 
         $offered = OfferedMethods::resolve($method, $methods);
@@ -116,8 +122,10 @@ class SpecResolver
     }
 
     /**
-     * Parse a per-route pipe-separated option — `methods=a|b`, `preconditions=a|b`,
-     * `pricing=a|b` — into an ordered list of names. Empty when unset or blank.
+     * Parses a per-route pipe-separated option into an ordered list of names.
+     *
+     * The options are `methods=a|b`, `preconditions=a|b` and `pricing=a|b`. The
+     * method returns an empty list when the option is unset or blank.
      *
      * @param  array<string, string>  $options
      * @return list<string>
@@ -128,7 +136,8 @@ class SpecResolver
     }
 
     /**
-     * The one pipe-separated-list rule: split, trim, drop the blanks.
+     * The one rule for a pipe-separated list: split it, trim each name, and drop
+     * the blank names.
      *
      * @return list<string>
      */
@@ -142,8 +151,10 @@ class SpecResolver
     }
 
     /**
-     * Read a price_book entry's own list of names, accepting either an array or
-     * the same pipe-separated string the middleware option takes.
+     * Reads the list of names in a price_book entry.
+     *
+     * The entry states either an array or the pipe-separated string that the
+     * middleware option takes.
      *
      * @param  array<string, mixed>  $entry
      * @return list<string>
@@ -179,8 +190,8 @@ class SpecResolver
 
     private function defaultAmount(): ?string
     {
-        // build() is the single place that normalises "stated no price" to null,
-        // so this only has to hand back what config holds.
+        // build() is the one place that normalises "stated no price" to null.
+        // This method therefore returns what the config holds.
         return config('mpp.defaults.amount');
     }
 

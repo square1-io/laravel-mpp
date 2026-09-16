@@ -9,9 +9,11 @@ use Square1\Mpp\Protocol\Requests\RailRequestBuilder;
 use Square1\Mpp\Protocol\Requests\TempoRequestBuilder;
 
 /**
- * Mints spec-format challenges — one Challenge per offered method, each
- * self-authenticating via the seven-slot HMAC binding (its id) — and renders
- * the `WWW-Authenticate` field lines and problem+json body for a 402.
+ * Mints challenges in the spec format, one Challenge per offered method.
+ *
+ * Each challenge authenticates itself through the seven-slot HMAC binding that
+ * forms its id. The class also renders the `WWW-Authenticate` field lines and
+ * the problem+json body for a 402 response.
  */
 class ChallengeFactory
 {
@@ -21,13 +23,17 @@ class ChallengeFactory
     ) {}
 
     /**
-     * Mint a challenge per offered method, honouring the caller's
-     * Accept-Payment ranking. Always returns at least the server-preferred
-     * set: an Accept-Payment that matches nothing is ignored per spec.
+     * Mints one challenge per offered method, in the Accept-Payment order of
+     * the caller.
      *
-     * `$digest` (the challenged body's RFC 9530 Content-Digest) and `$resource`
-     * (the route the challenge was minted for) describe the request, not the
-     * settlement method, so both are identical across every rail in one 402.
+     * The method always returns at least the set that the server prefers. The
+     * spec states that the server ignores an Accept-Payment header that matches
+     * nothing.
+     *
+     * `$digest` is the RFC 9530 Content-Digest of the challenged body.
+     * `$resource` is the route that the server mints the challenge for. Both
+     * describe the request and not the settlement method, so both are the same
+     * for every rail in one 402.
      *
      * @return non-empty-list<Challenge>
      */
@@ -60,25 +66,26 @@ class ChallengeFactory
         $now ??= CarbonImmutable::now();
         $config = (array) config("mpp.methods.{$method}", []);
 
-        // `resource` rides in opaque rather than earning a binding slot of its
-        // own: opaque is already slot 7, so anything placed here is bound into
-        // the id and echoed back, and adding a slot would change the HMAC of
-        // every challenge that omits it. Scope alone cannot stand in for it —
-        // one scope may cover several routes at several prices, so a challenge
-        // bought at the cheap one would settle at the dear one.
+        // `resource` travels in opaque and does not get a binding slot of its
+        // own. Opaque is already slot 7, so the id binds anything that the
+        // server places here, and a conformant client echoes it. A new slot
+        // would change the HMAC of every challenge that omits the value. Scope
+        // cannot replace the resource, because one scope can cover several
+        // routes at several prices. A challenge that a client bought at the
+        // cheap route would then settle at the expensive one.
         $opaque = array_filter([
             'scope' => $spec->scope,
             'grants' => $spec->grants > 1 ? (string) $spec->grants : null,
             'resource' => $resource,
         ], fn ($v) => $v !== null && $v !== '');
 
-        // A per-mint random nonce makes the challenge id unique. Without it the
-        // id is a pure function of realm|method|intent|request|expires|opaque,
-        // so two 402s minted for the same route+price in the same wall-clock
-        // second collide — and a re-challenge after a burn would resurrect the
-        // burned id, letting one payment settle twice. The nonce rides in the
-        // spec's `opaque` slot, so it is bound into the id (slot 7) and echoed
-        // unchanged by conformant clients.
+        // A random nonce per mint makes the challenge id unique. Without it, the
+        // id is a function of realm|method|intent|request|expires|opaque alone.
+        // Two 402 responses for the same route and price in the same second
+        // would then share an id. A new challenge after a burn would also return
+        // the burned id, and one payment could settle twice. The nonce travels
+        // in the `opaque` slot of the spec, so the id binds it (slot 7) and a
+        // conformant client echoes it without a change.
         $opaque['nonce'] = bin2hex(random_bytes(16));
 
         $unbound = new Challenge(
@@ -96,16 +103,19 @@ class ChallengeFactory
     }
 
     /**
-     * One WWW-Authenticate field line per challenge, in offered order.
+     * Returns one WWW-Authenticate field line per challenge, in the offered
+     * order.
      *
-     * Repeated field lines rather than a single comma-joined value: that is the
-     * form the spec illustrates (draft-httpauth-payment-00, B.2), and it is the
-     * unambiguous one to parse. Both are legal HTTP — WWW-Authenticate is a list
-     * field, so RFC 9110 allows either — but a joined value puts the commas
-     * separating challenges in the same position as the commas separating each
-     * challenge's own auth-params, leaving a parser to infer the boundaries.
+     * The method emits repeated field lines, and not one value joined by
+     * commas. The spec illustrates that form (draft-httpauth-payment-00, B.2),
+     * and a parser can read it without ambiguity.
      *
-     * A single-challenge 402 emits exactly one line, unchanged from before.
+     * Both forms are legal HTTP. WWW-Authenticate is a list field, and RFC 9110
+     * allows either form. In a joined value, the commas between challenges sit
+     * in the same position as the commas between the auth-params of one
+     * challenge. A parser must then infer where each challenge ends.
+     *
+     * A 402 with one challenge emits exactly one line, as before.
      *
      * @param  non-empty-list<Challenge>  $challenges
      * @return non-empty-list<string>
@@ -117,10 +127,12 @@ class ChallengeFactory
 
     /**
      * The registered problem types, keyed by the slug that completes
-     * `https://paymentauth.org/problems/<slug>`, as listed in the core draft's
-     * error table. All but `method-unsupported` are 402: the response carries a
-     * fresh challenge, so the request is still "payment required" — including a
-     * malformed credential, which the draft scores 402 rather than 400.
+     * `https://paymentauth.org/problems/<slug>`.
+     *
+     * The error table of the core draft lists them. Every type except
+     * `method-unsupported` is a 402. The response carries a fresh challenge, so
+     * the request still requires payment. That includes a malformed credential,
+     * which the draft records as a 402 and not a 400.
      *
      * @var array<string, array{title: string, status: int, detail: string}>
      */
@@ -163,11 +175,13 @@ class ChallengeFactory
     ];
 
     /**
-     * The RFC 9457 body for a rejection. `challengeId` names the primary
-     * challenge, and is omitted when the response carries none to name.
+     * Returns the RFC 9457 body for a rejection.
      *
-     * An unregistered `$type` falls back to `payment-required` rather than
-     * inventing a problem URL a client cannot look up.
+     * `challengeId` names the primary challenge. The method omits the field when
+     * the response carries no challenge to name.
+     *
+     * An unregistered `$type` falls back to `payment-required`. The method does
+     * not invent a problem URL that a client cannot look up.
      *
      * @param  list<Challenge>  $challenges
      * @return array<string, mixed>
@@ -192,8 +206,11 @@ class ChallengeFactory
     }
 
     /**
-     * The configured builder for a rail, else the rail default. Shared with the
-     * discovery generator so both derive a rail's request shape identically.
+     * Returns the configured builder for a rail, or the default builder for
+     * that rail.
+     *
+     * The discovery generator calls the same method, so both derive the request
+     * shape of a rail in the same way.
      *
      * @param  array<string, mixed>  $config
      */

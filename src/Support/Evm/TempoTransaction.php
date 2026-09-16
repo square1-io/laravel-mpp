@@ -5,33 +5,38 @@ namespace Square1\Mpp\Support\Evm;
 use InvalidArgumentException;
 
 /**
- * Decodes a serialized Tempo transaction (the `payload.signature` a tempo/mppx
- * client presents) into the fields the settlement layer needs to validate and
- * broadcast it: the chain id, the batched `calls[]`, and — for each call that
- * is a TIP-20 token transfer — the recipient, amount and 32-byte memo.
+ * Decodes a serialized Tempo transaction into the fields that the settlement
+ * layer needs.
  *
- * This mirrors the reference implementation exactly:
- *   - the envelope is `0x76` (sender) or `0x78` (fee-payer) followed by an RLP
- *     list (ox `TxEnvelopeTempo.deserialize`), and
- *   - a transfer call is `transfer(address,uint256)` (selector 0xa9059cbb) or
- *     `transferWithMemo(address,uint256,bytes32)` (selector 0x95777d59) on the
- *     token contract (mppx `tempo/server/Charge.decodeTransferCall`).
+ * The input is the `payload.signature` that a tempo or mppx client presents. The
+ * fields are the chain id, the batched `calls[]`, and, for each call that is a
+ * TIP-20 token transfer, the recipient, the amount and the 32-byte memo. The
+ * settlement layer uses them to validate and broadcast the transaction.
  *
- * Only DECODING is implemented — broadcasting re-sends the client's exact bytes,
- * and the network (not us) checks the signature by mining the transaction.
+ * The class follows the reference implementation exactly:
+ *   - the envelope is `0x76` for a sender, or `0x78` for a fee-payer, followed
+ *     by an RLP list. This is `TxEnvelopeTempo.deserialize` in ox.
+ *   - a transfer call is `transfer(address,uint256)`, with selector 0xa9059cbb,
+ *     or `transferWithMemo(address,uint256,bytes32)`, with selector 0x95777d59,
+ *     on the token contract. This is `tempo/server/Charge.decodeTransferCall` in
+ *     mppx.
+ *
+ * The class only DECODES. To broadcast, the package sends the exact bytes of the
+ * client again. The network checks the signature when it mines the transaction,
+ * and the package does not.
  */
 final class TempoTransaction
 {
-    /** Tempo serialized envelope type (sender-signed). */
+    /** The serialized envelope type of Tempo, for a transaction that the sender signed. */
     public const TYPE_SENDER = '76';
 
-    /** Tempo fee-payer envelope magic. */
+    /** The envelope magic value of Tempo, for a fee-payer transaction. */
     public const TYPE_FEE_PAYER = '78';
 
-    /** selector of transfer(address,uint256). */
+    /** The selector of transfer(address,uint256). */
     public const SELECTOR_TRANSFER = '0xa9059cbb';
 
-    /** selector of transferWithMemo(address,uint256,bytes32). */
+    /** The selector of transferWithMemo(address,uint256,bytes32). */
     public const SELECTOR_TRANSFER_WITH_MEMO = '0x95777d59';
 
     /**
@@ -44,7 +49,8 @@ final class TempoTransaction
     ) {}
 
     /**
-     * Returns true if the serialized bytes are a Tempo (0x76/0x78) transaction.
+     * Reports whether the serialized bytes are a Tempo transaction, which is a
+     * 0x76 or 0x78 envelope.
      */
     public static function isTempoTransaction(string $serialized): bool
     {
@@ -54,9 +60,9 @@ final class TempoTransaction
     }
 
     /**
-     * Deserialize a Tempo transaction envelope.
+     * Deserializes a Tempo transaction envelope.
      *
-     * @throws InvalidArgumentException on a non-Tempo envelope or malformed RLP
+     * @throws InvalidArgumentException on an envelope that is not a Tempo envelope, or on malformed RLP
      */
     public static function deserialize(string $serialized): self
     {
@@ -67,7 +73,7 @@ final class TempoTransaction
         }
 
         $hex = self::normalizeHex($serialized);
-        // Strip the 1-byte type prefix, RLP-decode the remainder.
+        // Remove the one-byte type prefix, and RLP-decode the rest.
         $body = '0x'.substr($hex, 2);
         $decoded = Rlp::decode($body);
 
@@ -75,10 +81,10 @@ final class TempoTransaction
             throw new InvalidArgumentException('Malformed Tempo transaction envelope.');
         }
 
-        // Field order (ox TxEnvelopeTempo): [chainId, maxPriorityFeePerGas,
-        // maxFeePerGas, gas, calls, accessList, nonceKey, nonce, validBefore,
-        // validAfter, feeToken, feePayerSignatureOrSender, authorizationList,
-        // (keyAuthorization?), signatureEnvelope].
+        // This is the field order of TxEnvelopeTempo in ox: [chainId,
+        // maxPriorityFeePerGas, maxFeePerGas, gas, calls, accessList, nonceKey,
+        // nonce, validBefore, validAfter, feeToken, feePayerSignatureOrSender,
+        // authorizationList, (keyAuthorization?), signatureEnvelope].
         $chainId = self::hexToInt(self::asString($decoded[0]));
         $callsRaw = $decoded[4];
 
@@ -104,7 +110,8 @@ final class TempoTransaction
     }
 
     /**
-     * The on-chain transaction hash = keccak256(serialized bytes), 0x-prefixed.
+     * Returns the on-chain transaction hash, which is keccak256 of the
+     * serialized bytes, with a 0x prefix.
      */
     public function hash(): string
     {
@@ -114,10 +121,13 @@ final class TempoTransaction
     }
 
     /**
-     * Decode a single call's data as a TIP-20 transfer, returning recipient,
-     * amount (decimal string) and an optional 32-byte memo (0x hex). Returns
-     * null when the call's `to` is not the given token contract or the calldata
-     * is not a recognised transfer selector — exactly mppx's `decodeTransferCall`.
+     * Decodes the data of one call as a TIP-20 transfer.
+     *
+     * The method returns the recipient, the amount as a decimal string, and an
+     * optional 32-byte memo as 0x hex. It returns null when the `to` of the call
+     * is not the given token contract, or when the calldata does not carry a
+     * transfer selector that the class recognises. This is the behaviour of
+     * `decodeTransferCall` in mppx.
      *
      * @param  array{to:?string,value:?string,data:?string}  $call
      * @return array{recipient:string, amount:string, memo:?string}|null
@@ -174,7 +184,7 @@ final class TempoTransaction
         return strtolower(substr($hex, 0, 2));
     }
 
-    /** Strip a 0x prefix and return lowercase hex with no prefix. */
+    /** Removes a 0x prefix, and returns hex in lower case with no prefix. */
     private static function normalizeHex(string $value): string
     {
         if (str_starts_with($value, '0x') || str_starts_with($value, '0X')) {
@@ -189,13 +199,13 @@ final class TempoTransaction
         return is_string($value) ? $value : '0x';
     }
 
-    /** Decode a 32-byte ABI word holding a left-padded address. */
+    /** Decodes a 32-byte ABI word that holds an address, padded on the left. */
     private static function addressFromWord(string $word): string
     {
         return '0x'.strtolower(substr($word, 24, 40));
     }
 
-    /** Decode a 32-byte ABI word as an unsigned integer, returned as a decimal string. */
+    /** Decodes a 32-byte ABI word as an unsigned integer, and returns a decimal string. */
     private static function uintFromWord(string $word): string
     {
         $word = ltrim($word, '0');

@@ -6,8 +6,11 @@ use Carbon\CarbonImmutable;
 use Illuminate\Contracts\Cache\Repository;
 
 /**
- * Persists minted challenges so a paid retry can be matched to its challenge,
- * and so a challenge can be burned (single-use) after it settles.
+ * Stores minted challenges.
+ *
+ * The package matches a paid retry to its challenge through this store. It also
+ * burns a challenge here after the challenge settles, because a challenge is
+ * single-use.
  */
 class ChallengeStore
 {
@@ -41,8 +44,11 @@ class ChallengeStore
     }
 
     /**
-     * Burn a challenge so it cannot be settled twice. Returns true if it was
-     * present (and is now gone), false if it had already been burned/expired.
+     * Burns a challenge, so that it cannot settle twice.
+     *
+     * The method returns true when the challenge was present, and is now gone. It
+     * returns false when the server had already burned the challenge, or when the
+     * challenge had expired.
      */
     public function burn(string $id): bool
     {

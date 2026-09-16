@@ -10,27 +10,29 @@ use Stripe\StripeClient;
 use Throwable;
 
 /**
- * Settles an SPT credential by creating and confirming a Stripe PaymentIntent.
+ * Settles an SPT credential. It creates a Stripe PaymentIntent and confirms it.
  *
- * The granted token is presented via
- * `payment_method_data[shared_payment_granted_token]` with `confirm=true`.
- * Settlement is only trusted when the resulting PaymentIntent has
- * `status === 'succeeded'` AND its amount/currency match the signed challenge.
- * The challenge id is used as the Stripe idempotency key so a retried settlement
- * can never double-charge.
+ * The class presents the granted token through
+ * `payment_method_data[shared_payment_granted_token]`, with `confirm=true`. It
+ * trusts the settlement only when the PaymentIntent has `status === 'succeeded'`
+ * AND its amount and currency match the signed challenge. It uses the challenge
+ * id as the Stripe idempotency key, so a settlement that the server retries can
+ * never charge twice.
  *
- * Verified against the SPT preview API (Stripe-Version 2026-05-27.preview).
+ * The class is verified against the SPT preview API, Stripe-Version
+ * 2026-05-27.preview.
  *
- * A failure reason travels back to the client in the 402 response, so anything
- * Stripe hands us — exception messages, PaymentIntent statuses — is logged for
- * the operator and replaced on the wire by {@see self::PUBLIC_FAILURE}. Raw
- * gateway detail can name internal accounts, keys or decline internals, and a
- * reason that varies with it is also an oracle for probing the seller's Stripe
- * account.
+ * A failure reason travels back to the client in the 402 response. The class
+ * therefore logs everything that Stripe returns for the operator, which includes
+ * exception messages and PaymentIntent statuses, and replaces it on the wire
+ * with {@see self::PUBLIC_FAILURE}. Raw gateway detail can name an internal
+ * account, a key, or the internals of a decline. A reason that changes with that
+ * detail is also an oracle, which lets a caller probe the Stripe account of the
+ * seller.
  */
 class StripeVerifier implements Verifier
 {
-    /** The only reason a settlement attempt reports to the client. */
+    /** The only reason that a settlement attempt reports to the client. */
     private const PUBLIC_FAILURE = 'Stripe settlement failed.';
 
     public function __construct(
@@ -67,8 +69,9 @@ class StripeVerifier implements Verifier
             'metadata' => $metadata,
         ];
 
-        // Attach a seller-account Customer for per-payer trackability, if the
-        // application resolved one for this request.
+        // Attach a Customer from the seller account, so that the seller can
+        // track each payer. This happens only when the application resolved a
+        // customer for this request.
         if (! empty($context['customer'])) {
             $params['customer'] = $context['customer'];
         }
@@ -97,7 +100,8 @@ class StripeVerifier implements Verifier
             return SettlementResult::failure(self::PUBLIC_FAILURE);
         }
 
-        // Never serve unless the settled money matches what we challenged for.
+        // Serve the resource only when the settled money matches the money that
+        // the challenge asked for.
         if ((int) $paymentIntent->amount !== $expectedMinor
             || strtolower((string) $paymentIntent->currency) !== $challenge->currency()) {
             Log::error('[mpp] Stripe settled an amount or currency the challenge did not ask for.', [

@@ -3,28 +3,29 @@
 namespace Square1\Mpp\Payment;
 
 /**
- * The ordered set of settlement rails a route offers, primary first.
+ * The ordered set of settlement rails that a route offers, primary first.
  *
- * The SET comes from the first of these that says anything:
+ * The SET comes from the first of these sources that states anything:
  *   1. an explicit per-route list (middleware `methods=…`, attribute `methods:`);
  *   2. an explicit single rail (middleware `method=…`, attribute `method:`);
  *   3. `config('mpp.accept')`;
  *   4. `config('mpp.default_method')` alone.
  *
- * The PRIMARY — the rail that leads the challenge set, and so the one a client
- * that does not negotiate will answer — is the head of that set, whatever its
- * source. A single `method=` overrides it and is hoisted to the front, added if
- * the set does not already hold it. One rule for every source, so a
- * pipe-separated list orders the rails identically in a route and in config.
+ * The PRIMARY rail leads the challenge set. A client that does not negotiate
+ * answers that rail. The primary rail is the first entry of the set, whatever
+ * the source of the set. A single `method=` overrides the primary rail and moves
+ * to the front. The class adds it when the set does not already hold it. One
+ * rule covers every source, so a pipe-separated list orders the rails in the
+ * same way in a route and in the config.
  *
- * `default_method` therefore chooses the rail for routes that name none, and
- * never reorders a set that does.
+ * `default_method` therefore chooses the rail for a route that names none. It
+ * never reorders a set that a route or the config states.
  *
- * Lives in its own class because two callers need the same answer: the gate,
- * via SpecResolver, when minting a 402, and DiscoveryDocument when advertising
- * the same route in `/openapi.json`. They were separate implementations of this
- * rule, and duplicating it is exactly how the advertised order and the minted
- * order come to disagree.
+ * This rule has its own class because two callers need the same answer. The gate
+ * needs it through SpecResolver, when it mints a 402. DiscoveryDocument needs it
+ * when it advertises the same route in `/openapi.json`. Each class once held its
+ * own implementation of the rule. Two implementations are how the advertised
+ * order and the minted order come to differ.
  */
 final class OfferedMethods
 {
@@ -51,7 +52,7 @@ final class OfferedMethods
             $offered = [$default];
         }
 
-        // De-duplicate while preserving order.
+        // Remove the duplicates and keep the order.
         $offered = array_values(array_unique(array_map('strval', $offered)));
 
         $primary = $explicit ? $method : $offered[0];

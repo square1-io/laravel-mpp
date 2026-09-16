@@ -6,15 +6,17 @@ use Square1\Mpp\Protocol\Challenge;
 use Square1\Mpp\Protocol\Credential;
 
 /**
- * Settlement rail abstraction. The protocol layer never trusts a client's claim
- * that it paid — a Verifier proves settlement against the underlying rail.
+ * The abstraction for a settlement rail.
+ *
+ * The protocol layer never trusts a claim by a client that it paid. A Verifier
+ * proves the settlement against the rail itself.
  */
 interface Verifier
 {
     /**
-     * @param  array<string, mixed>  $context  optional settlement context. The Stripe rail
-     *                                         honours `customer` (a seller-account customer
-     *                                         id to attach to the PaymentIntent).
+     * @param  array<string, mixed>  $context  Optional settlement context. The Stripe rail
+     *                                         reads `customer`, which is a customer id on the
+     *                                         seller account to attach to the PaymentIntent.
      */
     public function verify(Credential $credential, Challenge $challenge, array $context = []): SettlementResult;
 }
