@@ -459,6 +459,8 @@ MPP_DISCOVERY_LLMS=https://example.com/llms.txt
 
 `servers` follows `APP_URL` unless you set `mpp.discovery.servers`, which is what you want when the API lives on another host or behind a path prefix. Contact and licence details go in `config/mpp.php`; empty values are omitted rather than published blank.
 
+Documentation links may be written relative (`/llms.txt`) and are published absolute against your service URL. The draft types them `format: uri` and requires RFC 3986 conformance, so a relative reference fails a strict validator — and a registry that stored `"/"` has nothing to follow.
+
 The draft's two recommended response headers are on by default — `Cache-Control: public, max-age=300` and `Access-Control-Allow-Origin: *`. Set `mpp.discovery.cache_control` or `mpp.discovery.allow_origin` to `null` to drop either.
 
 ### What an Operation Is

@@ -374,3 +374,29 @@ it('does not turn a FormRequest on a bodiless verb into a request body', functio
     expect($paths['post'])->toHaveKey('requestBody')
         ->and($paths['get'])->not->toHaveKey('requestBody');
 });
+
+it('makes a relative documentation link absolute against the service URL', function () {
+    config()->set('mpp.discovery.servers', ['https://mpp.example.test']);
+    config()->set('mpp.discovery.docs.homepage', '/');
+    config()->set('mpp.discovery.docs.api_reference', 'openapi.json');
+    config()->set('mpp.discovery.docs.llms', '/llms.txt');
+
+    // The draft schema-types these `format: uri`, so a relative reference fails
+    // a strict validator — and a registry that stored "/" has nothing to follow.
+    expect($this->get('/openapi.json')->json('x-service-info.docs'))->toBe([
+        'homepage' => 'https://mpp.example.test/',
+        'apiReference' => 'https://mpp.example.test/openapi.json',
+        'llms' => 'https://mpp.example.test/llms.txt',
+    ]);
+});
+
+it('leaves an absolute or protocol-relative documentation link alone', function () {
+    config()->set('mpp.discovery.servers', ['https://mpp.example.test']);
+    config()->set('mpp.discovery.docs.homepage', 'https://docs.example.test/guide');
+    config()->set('mpp.discovery.docs.llms', '//cdn.example.test/llms.txt');
+
+    expect($this->get('/openapi.json')->json('x-service-info.docs'))->toBe([
+        'homepage' => 'https://docs.example.test/guide',
+        'llms' => '//cdn.example.test/llms.txt',
+    ]);
+});

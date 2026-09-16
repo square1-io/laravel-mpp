@@ -95,9 +95,9 @@ final class ServiceInfo
         ));
 
         $docs = $this->filter([
-            'homepage' => config('mpp.discovery.docs.homepage'),
-            'apiReference' => config('mpp.discovery.docs.api_reference'),
-            'llms' => config('mpp.discovery.docs.llms'),
+            'homepage' => $this->absolute(config('mpp.discovery.docs.homepage')),
+            'apiReference' => $this->absolute(config('mpp.discovery.docs.api_reference')),
+            'llms' => $this->absolute(config('mpp.discovery.docs.llms')),
         ]);
 
         $info = $this->filter([
@@ -106,6 +106,41 @@ final class ServiceInfo
         ]);
 
         return $info === [] ? null : $info;
+    }
+
+    /**
+     * Resolve a documentation link against the service's own base URL.
+     *
+     * The draft requires every `x-service-info` URI to conform to RFC 3986 and
+     * schema-types them `format: uri`, which means a scheme: `/llms.txt` is a
+     * relative reference, not a URI, and a strict validator rejects it. It also
+     * defeats the point — these links exist so a registry that has only the
+     * document can follow them, and a registry that has stored `"/"` has
+     * nothing to follow.
+     *
+     * Writing `/llms.txt` in config is the natural thing to do, so it is made
+     * absolute rather than refused. Nothing to resolve against leaves it as
+     * written: a wrong absolute URL would be worse than an honest relative one.
+     */
+    private function absolute(mixed $url): ?string
+    {
+        if (! is_string($url) || $url === '') {
+            return null;
+        }
+
+        // Already absolute, or protocol-relative (which carries its own host
+        // and must not be re-based).
+        if (str_starts_with($url, '//') || preg_match('#^[a-z][a-z0-9+.\-]*:#i', $url) === 1) {
+            return $url;
+        }
+
+        $base = $this->servers()[0]['url'] ?? null;
+
+        if (! is_string($base) || $base === '') {
+            return $url;
+        }
+
+        return rtrim($base, '/').'/'.ltrim($url, '/');
     }
 
     /**

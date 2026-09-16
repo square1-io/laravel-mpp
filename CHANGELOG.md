@@ -19,6 +19,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Fixed
 
+- Relative documentation links in `x-service-info.docs` are published absolute against the service URL. The draft types them `format: uri` and requires RFC 3986 conformance, so `/llms.txt` fails a strict validator, and a registry that stored `"/"` has nothing to follow. Writing them relative in config stays the natural thing to do.
 - A route with an optional parameter published an invalid path template. `/report/{year}/{month?}` was emitted verbatim, giving a path whose parameter is literally named `month?` and is declared nowhere. Path parameters are now declared (with a `where()` constraint carried across as an anchored `pattern`), and an optional Laravel parameter becomes the two OpenAPI paths it really is, since an OpenAPI path parameter is always required.
 
 ## [2.2.0]
