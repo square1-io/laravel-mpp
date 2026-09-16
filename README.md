@@ -611,12 +611,18 @@ A PHP `array` type does not name its member type, so the package reads the docbl
 | Docblock | Published |
 | --- | --- |
 | `list<Scoreline>` | `{"type": "array", "items": {…}}` |
+| `non-empty-list<Scoreline>` | the same |
 | `Scoreline[]` | the same |
 | `array<int, Scoreline>` | the same |
+| `array<array-key, Scoreline>` | the same |
 | `array<string, int>` | `{"type": "object", "additionalProperties": {"type": "integer"}}` |
-| none | `{"type": "array"}`, with no `items` |
+| none, or a member type the package cannot read | `{"type": "array"}`, with no `items` |
 
-A string key is a JSON object and any other key is a JSON array, so the two forms publish differently. The package resolves a class name in a docblock as the code around it does, through the `use` statements of the file. A generic of another kind, such as a collection class, states a container that the package does not model, and the property falls back to its declared type.
+A string key is a JSON object and any other key is a JSON array, so the two forms publish differently. The tag can nest, as in `array<string, list<int>>`.
+
+The package resolves a class name in a docblock as the code around it does, through the `use` statements of the file. That covers an alias and a grouped import. A promoted property carries its tag on the `@param` of the constructor, and any other property carries it on its own `@var`.
+
+A generic of another kind, such as a collection class, states a container that the package does not model. So does a member type that states several shapes, such as `list<int|string>`. The property then falls back to its declared type, which is an array with no `items`.
 
 The package states nothing else that it cannot read. An untyped property, a union type and `mixed` carry no shape, so the schema leaves them out. The schema never sets `additionalProperties: false`, so a property that the package left out reads as undocumented, and not as denied.
 
