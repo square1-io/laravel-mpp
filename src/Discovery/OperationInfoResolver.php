@@ -66,16 +66,7 @@ final class OperationInfoResolver
             return OperationInfo::empty();
         }
 
-        $uri = '/'.ltrim($route->uri(), '/');
-        $keys = [$route->getName()];
-
-        foreach ($route->methods() as $verb) {
-            $keys[] = strtoupper($verb).' '.$uri;
-        }
-
-        $keys[] = $uri;
-
-        foreach (array_filter($keys) as $key) {
+        foreach (RouteKeys::for($route) as $key) {
             if (is_array($operations[$key] ?? null)) {
                 return OperationInfo::fromArray($operations[$key]);
             }

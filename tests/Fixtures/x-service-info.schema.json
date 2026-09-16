@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "x-service-info",
+  "type": "object",
+  "properties": {
+    "categories": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "docs": {
+      "type": "object",
+      "properties": {
+        "apiReference": {
+          "type": "string",
+          "format": "uri"
+        },
+        "homepage": {
+          "type": "string",
+          "format": "uri"
+        },
+        "llms": {
+          "type": "string",
+          "format": "uri"
+        }
+      }
+    }
+  }
+}

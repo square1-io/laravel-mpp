@@ -400,3 +400,73 @@ it('leaves an absolute or protocol-relative documentation link alone', function 
         'llms' => '//cdn.example.test/llms.txt',
     ]);
 });
+
+// ── Free routes ─────────────────────────────────────────────────────────────
+
+it('lists only payment-gated routes by default', function () {
+    $paths = $this->get('/openapi.json')->json('paths');
+
+    expect($paths)->not->toHaveKey('/free/health')
+        ->and($paths)->not->toHaveKey('/free/redirect/{slug}');
+});
+
+it('lists a free route that config names, with no payment extension', function () {
+    config()->set('mpp.discovery.include', ['free.redirect']);
+
+    $operation = $this->get('/openapi.json')->json('paths./free/redirect/{slug}.get');
+
+    // Free means free: no offers to mislead a client into paying, and no 402
+    // the route will never send.
+    expect($operation)->not->toHaveKey('x-payment-info')
+        ->and($operation['responses'])->not->toHaveKey('402')
+        ->and($operation['operationId'])->toBe('free.redirect')
+        ->and($operation['parameters'][0]['name'])->toBe('slug');
+});
+
+it('matches an include pattern by name, by path and by wildcard', function () {
+    config()->set('mpp.discovery.include', ['GET /free/health']);
+    expect($this->get('/openapi.json')->json('paths'))->toHaveKey('/free/health');
+
+    config()->set('mpp.discovery.include', ['free/*']);
+    $paths = $this->get('/openapi.json')->json('paths');
+
+    expect($paths)->toHaveKey('/free/health')
+        ->and($paths)->toHaveKey('/free/redirect/{slug}');
+});
+
+it('documents a free route the same way it documents a paid one', function () {
+    config()->set('mpp.discovery.include', ['free.redirect']);
+    config()->set('mpp.discovery.operations', [
+        'free.redirect' => [
+            'summary' => 'Redirect a short link (free)',
+            'response' => [
+                '307' => ['description' => 'Redirect to the destination URL'],
+                '404' => ['description' => 'Unknown short link'],
+            ],
+        ],
+    ]);
+
+    $operation = $this->get('/openapi.json')->json('paths./free/redirect/{slug}.get');
+
+    expect($operation['summary'])->toBe('Redirect a short link (free)')
+        // A route that named its own responses does not also get a 200 it never
+        // returns.
+        ->and($operation['responses'])->toBe([
+            '307' => ['description' => 'Redirect to the destination URL'],
+            '404' => ['description' => 'Unknown short link'],
+        ]);
+});
+
+it('never lists the discovery document itself', function () {
+    config()->set('mpp.discovery.include', ['*']);
+
+    expect($this->get('/openapi.json')->json('paths'))->not->toHaveKey('/openapi.json');
+});
+
+it('keeps a hidden free route unlisted', function () {
+    config()->set('mpp.discovery.include', ['*']);
+    config()->set('mpp.discovery.operations', ['free.redirect' => ['hidden' => true]]);
+
+    expect($this->get('/openapi.json')->json('paths'))
+        ->not->toHaveKey('/free/redirect/{slug}');
+});

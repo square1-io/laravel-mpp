@@ -5,6 +5,7 @@ namespace Square1\Mpp\Discovery;
 use Illuminate\Routing\Route;
 use Illuminate\Routing\Router;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Str;
 use Square1\Mpp\Attributes\RequiresPayment;
 use Square1\Mpp\Payment\OfferedMethods;
 use Square1\Mpp\Payment\PaymentSpec;
@@ -74,7 +75,7 @@ class DiscoveryDocument
 
             $info = $this->paymentInfoFor($route, $meta);
 
-            if ($info === null) {
+            if ($info === null && ! $this->included($route)) {
                 continue;
             }
 
@@ -118,13 +119,16 @@ class DiscoveryDocument
     }
 
     /**
-     * One operation object.
+     * One operation object. A null `$info` is a free route that config asked to
+     * be listed: documented like any other, but with no payment extension and
+     * no 402, because it is not payable and saying otherwise would be a lie a
+     * client acts on.
      *
-     * @param  array{offers: non-empty-list<array<string, mixed>>}  $info
+     * @param  array{offers: non-empty-list<array<string, mixed>>}|null  $info
      * @param  list<array<string, mixed>>  $parameters
      * @return array<string, mixed>
      */
-    private function operation(array $info, OperationInfo $meta, array $parameters, string $httpMethod, ?string $operationId): array
+    private function operation(?array $info, OperationInfo $meta, array $parameters, string $httpMethod, ?string $operationId): array
     {
         $operation = array_filter([
             'operationId' => $operationId,
@@ -137,7 +141,9 @@ class DiscoveryDocument
             $operation['deprecated'] = true;
         }
 
-        $operation['x-payment-info'] = $info;
+        if ($info !== null) {
+            $operation['x-payment-info'] = $info;
+        }
 
         $parameters = [...$parameters, ...$this->queryParameters($meta)];
 
@@ -145,28 +151,71 @@ class DiscoveryDocument
             $operation['parameters'] = $parameters;
         }
 
-        // Discovery consumers expect body-carrying operations to declare a
-        // requestBody. A schema derived from the route's own FormRequest (or
-        // stated outright) is the one the draft asks for; a permissive JSON
-        // object remains the honest fallback for a payment-gated endpoint whose
-        // body is app-defined and undeclared.
-        if (in_array($httpMethod, ['POST', 'PUT', 'PATCH'], true)) {
-            $operation['requestBody'] = $this->schemas->requestBody($meta->request)
-                ?? ['content' => ['application/json' => ['schema' => ['type' => 'object']]]];
-        } elseif (($body = $this->schemas->requestBody($meta->request)) !== null) {
+        $body = $this->schemas->requestBody($meta->request);
+
+        if ($body !== null) {
             // A stated body on a GET is unusual but legal, and a site owner who
             // wrote one meant it.
             $operation['requestBody'] = $body;
+        } elseif ($info !== null && in_array($httpMethod, ['POST', 'PUT', 'PATCH'], true)) {
+            // Discovery consumers expect a body-carrying PAYABLE operation to
+            // declare a requestBody, so a permissive JSON object stands in when
+            // the body is app-defined and undeclared. A free route gets no such
+            // placeholder: `{"type": "object"}` says nothing, and the reason to
+            // say it anyway does not apply.
+            $operation['requestBody'] = ['content' => ['application/json' => ['schema' => ['type' => 'object']]]];
         }
 
-        // A stated response wins, and the draft's required 402 — plus a 200 to
-        // describe the thing being paid for — is added to whatever is left.
-        $operation['responses'] = $this->schemas->responses($meta->response) + [
-            '200' => ['description' => 'Successful response'],
-            '402' => ['description' => 'Payment Required'],
-        ];
+        $responses = $this->schemas->responses($meta->response);
+
+        if ($responses === []) {
+            // Only when the operation described no response at all. A route that
+            // named its own — a 307 redirect, a 404 — does not also get a 200 it
+            // never returns.
+            $responses = ['200' => ['description' => 'Successful response']];
+        }
+
+        if ($info !== null) {
+            // Required by the draft on every payable operation, whatever else
+            // the site owner said.
+            $responses += ['402' => ['description' => 'Payment Required']];
+        }
+
+        $operation['responses'] = $responses;
 
         return $operation;
+    }
+
+    /**
+     * Whether a route that charges nothing should nonetheless be listed.
+     *
+     * The document describes an API surface, and a paid API usually has free
+     * parts — a redirect, a status endpoint, the free tier of a paid one — that
+     * an agent planning a call needs to know about and would otherwise have to
+     * discover by paying for something. `mpp.discovery.include` names them,
+     * matched against the same keys `operations` uses, with `*` wildcards.
+     *
+     * Empty by default, and deliberately opt-in per route: a broad pattern
+     * publishes your route table to an unauthenticated endpoint that registries
+     * crawl, which is a decision about disclosure rather than a convenience.
+     */
+    private function included(Route $route): bool
+    {
+        $patterns = (array) config('mpp.discovery.include', []);
+
+        if ($patterns === [] || $route->getName() === 'mpp.discovery') {
+            // The document never lists itself. `x-service-info.docs.apiReference`
+            // is where a document points at where it lives.
+            return false;
+        }
+
+        foreach (RouteKeys::for($route) as $key) {
+            if (Str::is($patterns, $key)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**

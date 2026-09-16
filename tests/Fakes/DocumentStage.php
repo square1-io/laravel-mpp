@@ -20,6 +20,31 @@ class DocumentStage
     }
 
     /**
+     * Adds a key to every offer that the draft's schema forbids — the exact
+     * shape of mpp.tl's own non-conformance, and what the conformance test
+     * exists to catch.
+     *
+     * @param  array<string, mixed>  $document
+     * @return array<string, mixed>
+     */
+    public function addRecipient(array $document): array
+    {
+        foreach ($document['paths'] as $path => $verbs) {
+            foreach ($verbs as $verb => $operation) {
+                if (! isset($operation['x-payment-info']['offers'])) {
+                    continue;
+                }
+
+                foreach ($operation['x-payment-info']['offers'] as $i => $offer) {
+                    $document['paths'][$path][$verb]['x-payment-info']['offers'][$i]['recipient'] = '0x0dcd';
+                }
+            }
+        }
+
+        return $document;
+    }
+
+    /**
      * @param  array<string, mixed>  $document
      * @return array<string, mixed>
      */

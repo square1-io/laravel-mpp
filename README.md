@@ -552,6 +552,18 @@ Some of the document needs nothing written for it at all:
 - **Path parameters** are declared, with a `where()` constraint carried across as an anchored `pattern`. An optional Laravel parameter — `/report/{year}/{month?}` — becomes two OpenAPI paths rather than one optional parameter, because an OpenAPI path parameter is always required.
 - **Docblocks** on the action become the operation's `summary` and `description`, first paragraph and rest, annotation tags dropped. **Off by default**: a docblock is written for colleagues and may say things you would not publish to an unauthenticated endpoint that registries crawl. Read yours, then set `MPP_DISCOVERY_DOCBLOCKS=true`.
 
+### Free Routes
+
+A paid API usually has free parts — a redirect, a status endpoint, the free tier of a paid one — and an agent planning a call needs to know about them or it pays to find out. Only payment-gated routes are listed by default; name the free ones to list them too:
+
+```php
+'include' => ['links.redirect', 'GET /health', 'api/public/*'],
+```
+
+Matched against the same keys as `operations` — route name, `"GET /uri"`, `"/uri"`, with or without the leading slash — and `*` wildcards. Listed free routes are documented like any other (summary, parameters, schemas) but carry no `x-payment-info` and no `402`, because they are not payable and saying otherwise is a lie a client acts on.
+
+Keep the patterns specific. A broad one publishes your route table on an unauthenticated endpoint that registries crawl, which is a decision about disclosure rather than a convenience. The discovery document never lists itself.
+
 ### Anything Else
 
 OpenAPI is larger than the part of it the payment drafts care about. When you need something the package does not model — `components`, a security scheme, free routes alongside the paid ones — post-process the finished document:
@@ -576,6 +588,8 @@ class DiscoveryComponents
 ```
 
 Stages run in order and each takes and returns the document array. They are `[Class::class, 'method']` pairs resolved through the container, so the list survives `php artisan config:cache`. A stage that throws or returns something other than an array is logged and skipped — a broken post-processor must not take discovery down.
+
+The pipeline is the one place you can make the document non-conformant. The draft publishes JSON Schemas for both its extensions and both are `additionalProperties: false`, so a well-meant extra key on an offer — a `recipient`, a `price` block — matches neither branch and fails a strict registry. The package's own test suite validates the generated document against those schemas, copied verbatim from the draft into `tests/Fixtures`; worth doing the same over your own document if you use the pipeline.
 
 
 ## Protecting Routes
@@ -1039,6 +1053,7 @@ The main settings live in `config/mpp.php`.
 | `discovery.docblocks` | Publishes the action's docblock as the operation's summary and description. Default: `false`. |
 | `discovery.cache_control` / `.allow_origin` | The response headers the draft recommends. Null sends neither. |
 | `discovery.operations` | Per-operation documentation for routes you cannot annotate, keyed by route name or `"GET /uri"`. |
+| `discovery.include` | Free (non-gated) routes to list in the document, matched by route name, `"GET /uri"` or `"/uri"` with `*` wildcards. Empty by default. |
 | `discovery.pipeline` | `[Class::class, 'method']` stages that post-process the finished document. |
 
 ### Price Book

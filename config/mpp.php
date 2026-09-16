@@ -269,6 +269,25 @@ return [
         //
         'operations' => [],
 
+        // ── Free routes ──────────────────────────────────────────────────────
+        // A paid API usually has free parts — a redirect, a status endpoint, the
+        // free tier of a paid one — and an agent planning a call needs to know
+        // about them or it pays to find out. Only payment-gated routes are
+        // listed by default; name the free ones here to list them too. They are
+        // documented like any other route (summary, schemas, the lot) but carry
+        // no x-payment-info and no 402.
+        //
+        // Matched against the same keys as `operations` — route name, "GET /uri",
+        // "/uri" — with `*` wildcards:
+        //
+        //   'include' => ['links.redirect', 'GET /health', 'api/public/*'],
+        //
+        // EMPTY BY DEFAULT, and worth keeping specific. A broad pattern
+        // publishes your route table on an unauthenticated endpoint that
+        // registries crawl, which is a decision about disclosure rather than a
+        // convenience. The discovery document never lists itself.
+        'include' => [],
+
         // ── The last word ────────────────────────────────────────────────────
         // OpenAPI is larger than the part of it the payment drafts care about.
         // Each entry is a [Class::class, 'method'] pair (resolved through the

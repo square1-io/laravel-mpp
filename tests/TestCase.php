@@ -204,6 +204,11 @@ abstract class TestCase extends OrchestraTestCase
         Route::get('/doc/report/{year}/{month?}', fn () => response('REPORT', 200))
             ->middleware('mpp:0.50,USD')->where('year', '[0-9]{4}');
 
+        // ── Free routes ──────────────────────────────────────────────────────
+        // Not payment-gated. Listed only when `mpp.discovery.include` names them.
+        Route::get('/free/redirect/{slug}', fn () => redirect('/'))->name('free.redirect');
+        Route::get('/free/health', fn () => response()->json(['ok' => true]));
+
         // Attribute auto-enforced by the EnforcePaymentAttributes middleware on a group.
         Route::middleware(EnforcePaymentAttributes::class)->group(function () {
             Route::get('/attr/auto', [PaidController::class, 'clip']);
