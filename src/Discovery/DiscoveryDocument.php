@@ -378,7 +378,7 @@ class DiscoveryDocument
             }
 
             if (! is_array($result)) {
-                Log::warning("[mpp] Discovery pipeline stage {$stage[0]}::{$stage[1]}() did not return the document array; ignoring it.");
+                Log::warning("[mpp] Discovery pipeline stage {$stage[0]}::{$stage[1]}() did not return the document array. The package ignores this stage.");
 
                 continue;
             }

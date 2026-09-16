@@ -50,7 +50,7 @@ trait ResolvesNamedCallables
 
         if (! is_array($entry) || count($entry) !== 2 || ! is_string($entry[0])) {
             throw new InvalidConfigurationException(
-                "Unknown {$noun} '{$name}'. Define it under {$registryConfigKey} "
+                "Unknown {$noun} '{$name}'. Define it under {$registryConfigKey}, "
                 ."as a [Class::class, 'method'] pair."
             );
         }

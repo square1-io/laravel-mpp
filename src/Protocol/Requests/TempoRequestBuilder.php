@@ -31,7 +31,7 @@ class TempoRequestBuilder implements RailRequestBuilder
 
         if (bccomp($scaled, $minor = bcadd($scaled, '0', 0), 8) !== 0) {
             throw new InvalidConfigurationException(
-                "Amount '{$spec->amount}' has more precision than the tempo token's {$decimals} decimals."
+                "Amount '{$spec->amount}' has more decimal places than the {$decimals} that the tempo token allows."
             );
         }
 

@@ -46,8 +46,8 @@ class ChallengeSecret
         }
 
         throw new InvalidConfigurationException(
-            'No challenge signing key is available. Set MPP_CHALLENGE_SECRET (recommended, '
-            .'so it can be rotated independently) or ensure APP_KEY is set.'
+            'No challenge signing key is available. Set MPP_CHALLENGE_SECRET, which is the '
+            .'recommendation because you can then rotate it separately. Otherwise set APP_KEY.'
         );
     }
 }

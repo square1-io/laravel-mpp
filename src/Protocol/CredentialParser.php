@@ -71,7 +71,7 @@ class CredentialParser
         // conformant credential carries no float.
         if ($this->hasFloat($decoded)) {
             throw new MalformedCredentialException(
-                'Payment credential contains a non-integer or out-of-range number; encode numeric values as strings.'
+                'Payment credential holds a number that is not an integer, or that is out of range. Encode every numeric value as a string.'
             );
         }
 

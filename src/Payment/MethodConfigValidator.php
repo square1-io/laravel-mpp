@@ -72,7 +72,7 @@ class MethodConfigValidator
         if (preg_match('/^[a-z]+$/D', $method) !== 1) {
             throw new InvalidConfigurationException(
                 "The payment method identifier '{$method}' is not valid. The MPP core spec "
-                .'restricts method identifiers to one or more lowercase ASCII letters (a-z).'
+                .'allows one or more lower-case ASCII letters (a-z), and nothing else.'
             );
         }
 
@@ -118,7 +118,7 @@ class MethodConfigValidator
                 // it.
                 'required' => ['network_id', 'payment_method_types'],
                 'recommended' => [
-                    'secret_key' => 'Stripe settlement will fail until a secret key is set; the 402 challenge is still emitted (set STRIPE_SECRET_KEY).',
+                    'secret_key' => 'Stripe settlement fails until you set a secret key. The package still emits the 402 challenge. Set STRIPE_SECRET_KEY.',
                 ],
                 'env' => ['secret_key' => 'STRIPE_SECRET_KEY', 'network_id' => 'STRIPE_NETWORK_ID'],
             ],
@@ -127,7 +127,7 @@ class MethodConfigValidator
                 // client cannot pay the 402 that the gate emits.
                 'required' => ['recipient', 'token', 'chain_id'],
                 'recommended' => [
-                    'rpc_url' => 'Tempo settlement cannot broadcast the client-signed transaction without a JSON-RPC endpoint (set TEMPO_RPC_URL).',
+                    'rpc_url' => 'Tempo settlement cannot broadcast the transaction that the client signed without a JSON-RPC endpoint. Set TEMPO_RPC_URL.',
                 ],
                 'env' => [
                     'recipient' => 'TEMPO_RECIPIENT',
@@ -199,9 +199,9 @@ class MethodConfigValidator
         );
 
         return sprintf(
-            "The '%s' payment rail is offered on this route but its configuration is incomplete. "
-            .'Missing required config: %s — set it under config/mpp.php (mpp.methods.%s), '
-            ."or remove '%s' from the methods this route offers.",
+            "This route offers the '%s' payment rail, and its configuration is incomplete. "
+            .'The following required config is missing: %s. Set it in config/mpp.php, under '
+            ."mpp.methods.%s. You can also remove '%s' from the methods that this route offers.",
             $method,
             implode(', ', $pairs),
             $method,
@@ -219,6 +219,6 @@ class MethodConfigValidator
 
         $this->warned[$flag] = true;
 
-        Log::warning("[mpp] The '{$method}' rail is missing recommended config '{$key}': {$why}");
+        Log::warning("[mpp] The '{$method}' rail is missing the recommended config '{$key}'. {$why}");
     }
 }

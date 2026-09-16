@@ -90,7 +90,7 @@ final class PaymentSpec
 
         if ($unknown !== []) {
             throw new InvalidConfigurationException(sprintf(
-                'A price resolver returned unknown override(s): %s. Only %s may be overridden.',
+                'A price resolver returned keys that it cannot override: %s. It can override only %s.',
                 implode(', ', $unknown),
                 implode(', ', self::OVERRIDABLE),
             ));
@@ -102,14 +102,14 @@ final class PaymentSpec
         // this list prevents.
         if (($overrides['free'] ?? false) === true && array_key_exists('amount', $overrides)) {
             throw new InvalidConfigurationException(
-                "A price resolver returned both 'free' => true and an 'amount'. Return one or the other: "
-                ."'free' => true waives the charge entirely."
+                "A price resolver returned both 'free' => true and an 'amount'. Return one of them. "
+                ."'free' => true waives the whole charge."
             );
         }
 
         return new self(
             amount: $this->overrideAmount($overrides),
-            currency: $this->overrideString($overrides, 'currency', $this->currency, upper: true, hint: "Return a currency code like 'USD', or omit the key."),
+            currency: $this->overrideString($overrides, 'currency', $this->currency, upper: true, hint: "Return a currency code such as 'USD', or omit the key."),
             grants: $this->overrideGrants($overrides),
             scope: $this->overrideString($overrides, 'scope', $this->scope, upper: false, hint: 'Return a non-empty scope, or omit the key.'),
             method: $this->method,
@@ -131,7 +131,7 @@ final class PaymentSpec
 
         if (! is_bool($overrides['free'])) {
             throw new InvalidConfigurationException(
-                "A price resolver returned a non-boolean 'free'. Use `'free' => true` to waive the charge."
+                "A price resolver returned a 'free' value that is not a boolean. Use `'free' => true` to waive the charge."
             );
         }
 
@@ -151,7 +151,7 @@ final class PaymentSpec
 
         if (! is_string($amount) && ! is_int($amount) && ! is_float($amount)) {
             throw new InvalidConfigurationException(
-                "A price resolver returned a non-numeric 'amount'. Return a decimal string like '2.00'."
+                "A price resolver returned an 'amount' that is not numeric. Return a decimal string such as '2.00'."
             );
         }
 
@@ -162,8 +162,8 @@ final class PaymentSpec
         // be positive.
         if (! Money::isValidAmount($amount) || (float) $amount <= 0) {
             throw new InvalidConfigurationException(sprintf(
-                "A price resolver returned an invalid 'amount' (%s). It must be a positive number; "
-                ."to waive the charge return `'free' => true` instead.",
+                "A price resolver returned an 'amount' that is not valid (%s). The amount must be a "
+                ."positive number. To waive the charge, return `'free' => true` instead.",
                 $amount === '' ? "''" : $amount,
             ));
         }
@@ -209,7 +209,7 @@ final class PaymentSpec
 
         if ((! is_int($grants) && ! (is_string($grants) && ctype_digit($grants))) || (int) $grants < 1) {
             throw new InvalidConfigurationException(
-                "A price resolver returned an invalid 'grants'. It must be an integer of 1 or more."
+                "A price resolver returned a 'grants' value that is not valid. It must be an integer of 1 or more."
             );
         }
 

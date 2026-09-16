@@ -21,6 +21,11 @@ The public API is the config file, the middleware argument syntax, the `#[Requir
 - The test suite now validates the generated document against the JSON Schemas of the draft, for `x-payment-info` and for `x-service-info`. The tests hold a copy of each schema, taken from the draft without a change, in `tests/Fixtures`. Both schemas set `additionalProperties: false`, so the tests catch an extra key that a strict registry rejects. That includes a key that a pipeline stage adds, and the pipeline is the one place where an application can make the document non-conformant. This adds `opis/json-schema` as a dev dependency.
 - The package serves the document with the two response headers that the draft recommends. They are `Cache-Control: public, max-age=300` and `Access-Control-Allow-Origin: *`. Set `mpp.discovery.cache_control` or `mpp.discovery.allow_origin` to null to omit either one.
 
+### Changed
+
+- The exception messages, the log messages and the RFC 9457 `detail` text now follow the same plain-English standard as the rest of the documentation. Each message states one idea per sentence, in the active voice. No message carries a different meaning.
+- One of those messages is visible to a client. The `detail` of the 409 response that the gate returns while a settlement is in progress now reads "A payment for this challenge is already settling. Retry the same request shortly. Do not send a new payment." RFC 9457 defines `detail` as text for a person to read, and the `type` URI stays the field that a client matches on. Every `detail` on a 402 response is unchanged.
+
 ### Fixed
 
 - The package now publishes a relative documentation link in `x-service-info.docs` as an absolute link, against the service URL. The draft types those links `format: uri`, and requires conformance with RFC 3986. A strict validator therefore rejects `/llms.txt`, and a registry that stored `"/"` has nothing to follow. You can still write the link as a relative link in the config.

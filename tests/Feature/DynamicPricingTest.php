@@ -90,7 +90,7 @@ it('does not let a resolver change the offered rail', function () {
     TieredPricing::$overrides = ['method' => 'tempo'];
 
     $this->withoutExceptionHandling()->get('/price/tiered');
-})->throws(InvalidConfigurationException::class, 'unknown override(s): method');
+})->throws(InvalidConfigurationException::class, 'cannot override: method');
 
 it('prices a route reached through a price_book key', function () {
     TieredPricing::$overrides = ['amount' => '3.00'];
@@ -216,7 +216,7 @@ it('refuses a zero amount, insisting free be stated explicitly', function () {
     TieredPricing::$overrides = ['amount' => '0'];
 
     $this->withoutExceptionHandling()->get('/price/tiered');
-})->throws(InvalidConfigurationException::class, "to waive the charge return `'free' => true` instead");
+})->throws(InvalidConfigurationException::class, "To waive the charge, return `'free' => true` instead.");
 
 it('refuses free and an amount together', function () {
     TieredPricing::$overrides = ['free' => true, 'amount' => '2.00'];
@@ -292,7 +292,7 @@ it('warns when a resolver reprices a metered route without changing its scope', 
     Log::shouldReceive('warning')
         ->once()
         ->withArgs(fn (string $message) => str_contains($message, "metered scope 'price.metered'")
-            && str_contains($message, 'scope-bound, not payer-bound'));
+            && str_contains($message, 'bound to a scope, and not to a payer'));
 
     TieredPricing::$overrides = ['amount' => '2.00'];
 

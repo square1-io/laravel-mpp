@@ -103,7 +103,7 @@ class Money
         // forbids.
         if (in_array(strtoupper($currency), self::WHOLE_UNIT, true) && $minor % 100 !== 0) {
             throw new InvalidConfigurationException(
-                "Money amount '{$amount}' must be a whole {$currency}; Stripe does not allow fractional {$currency}."
+                "Money amount '{$amount}' must be a whole {$currency}. Stripe does not allow a fractional {$currency}."
             );
         }
 

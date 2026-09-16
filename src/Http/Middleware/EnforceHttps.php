@@ -41,9 +41,10 @@ class EnforceHttps
     {
         if (! $request->isSecure() && ! config('mpp.allow_insecure', false)) {
             throw new InvalidConfigurationException(
-                'MPP requires HTTPS: payment terms and proofs must not travel over unencrypted HTTP. '
-                .'Serve this route over TLS (configure trusted proxies if TLS terminates upstream), '
-                .'or set MPP_ALLOW_INSECURE=true for local development and testing.'
+                'MPP requires HTTPS, because payment terms and proofs must not travel over '
+                .'unencrypted HTTP. Serve this route over TLS. Configure the trusted proxies when '
+                .'TLS terminates before your application. For local development and testing, set '
+                .'MPP_ALLOW_INSECURE=true.'
             );
         }
     }

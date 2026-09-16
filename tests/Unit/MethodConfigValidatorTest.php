@@ -243,7 +243,7 @@ it('rejects a method identifier that is not lowercase ASCII letters', function (
     config()->set("mpp.methods.{$method}.verifier", FakeVerifier::class);
 
     expect(fn () => $this->validator->validateMethod($method))
-        ->toThrow(InvalidConfigurationException::class, 'lowercase ASCII letters');
+        ->toThrow(InvalidConfigurationException::class, 'lower-case ASCII letters');
 })->with([
     'uppercase' => 'AcmePay',
     'digit' => 'acme2',

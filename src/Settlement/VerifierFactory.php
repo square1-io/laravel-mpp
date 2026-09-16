@@ -28,7 +28,7 @@ class VerifierFactory
 
         if (! $verifier instanceof Verifier) {
             throw new InvalidConfigurationException(
-                "Configured verifier for '{$method}' must implement ".Verifier::class.'.'
+                "The verifier configured for '{$method}' must implement ".Verifier::class.'.'
             );
         }
 

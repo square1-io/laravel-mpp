@@ -120,13 +120,14 @@ class PaymentPipeline
         $ran = $this->pricing->namesFor($spec);
 
         $cause = $ran === []
-            ? 'Give it an amount (e.g. mpp:0.50,USD), set a global default (MPP_DEFAULT_AMOUNT / '
-                .'mpp.defaults.amount), reference a price_book key, use a #[RequiresPayment] '
-                .'attribute, or attach a price resolver with `pricing=` and have it return one.'
-            : 'It states no amount, and the price resolver(s) that ran ('.implode(', ', $ran).') '
-                ."all declined by returning null. Return an `['amount' => …]` from one of them, "
-                .'give the route a fallback amount, or — if this request should not be charged at '
-                ."all — return `['free' => true]` rather than null.";
+            ? 'Give the route an amount, for example mpp:0.50,USD. You can also set a global '
+                .'default with MPP_DEFAULT_AMOUNT or mpp.defaults.amount, name a price_book key, '
+                .'add a #[RequiresPayment] attribute, or attach a price resolver with `pricing=` '
+                .'and have it return an amount.'
+            : 'The route states no amount, and every price resolver that ran ('.implode(', ', $ran).') '
+                ."returned null. Return an `['amount' => …]` from one of them, or give the route a "
+                ."fallback amount. If this request is not to be charged, return `['free' => true]` "
+                .'instead of null.';
 
         return "No price for route [{$route}]. {$cause}";
     }
@@ -137,7 +138,7 @@ class PaymentPipeline
 
         if ($attribute === null) {
             throw new InvalidConfigurationException(
-                'The mpp middleware was used without arguments and the action has no #[RequiresPayment] attribute.'
+                'The mpp middleware ran with no arguments, and the action carries no #[RequiresPayment] attribute.'
             );
         }
 

@@ -83,7 +83,7 @@ class PriceResolver
 
             if (! is_array($overrides)) {
                 throw new InvalidConfigurationException(
-                    "The price resolver '{$name}' must return an array of overrides or null, ".get_debug_type($overrides).' given.'
+                    "The price resolver '{$name}' must return an array of overrides, or null. It returned ".get_debug_type($overrides).'.'
                 );
             }
 
@@ -131,9 +131,10 @@ class PriceResolver
         $this->warned[$original->scope] = true;
 
         Log::warning(
-            "[mpp] A price resolver changed the amount on metered scope '{$final->scope}' without changing the "
-            .'scope. Metered sessions are scope-bound, not payer-bound, so a session bought at one price is '
-            .'spendable by any bearer on this scope. Return a distinct `scope` per price tier.'
+            "[mpp] A price resolver changed the amount on the metered scope '{$final->scope}', and did not "
+            .'change the scope. A metered session is bound to a scope, and not to a payer. Any holder can '
+            .'therefore spend a session that someone bought at one price within this scope. Return a '
+            .'separate `scope` for each price tier.'
         );
     }
 }

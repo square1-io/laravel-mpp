@@ -82,8 +82,8 @@ class PaymentGate
         // for it is the worst result.
         if ($spec->free) {
             throw new InvalidConfigurationException(
-                "A waived (free) spec reached the payment gate for scope '{$spec->scope}'. "
-                .'Free requests are served by the PaymentPipeline and must not be charged.'
+                "A waived spec reached the payment gate, for the scope '{$spec->scope}'. "
+                .'The PaymentPipeline serves a free request, and the gate must not charge for it.'
             );
         }
 
@@ -412,7 +412,7 @@ class PaymentGate
     private function replayableBody(Response $response): ?string
     {
         if ($response instanceof StreamedResponse || $response instanceof BinaryFileResponse) {
-            Log::warning('[mpp] A paid '.$response::class.' response cannot be snapshotted for idempotent replay; a lost-response retry will take a fresh challenge.');
+            Log::warning('[mpp] The package cannot snapshot a paid '.$response::class.' response for an idempotent replay. A retry after a lost response takes a fresh challenge.');
 
             return null;
         }
@@ -420,7 +420,7 @@ class PaymentGate
         $content = (string) $response->getContent();
 
         if (strlen($content) > $this->replayMaxBytes) {
-            Log::warning('[mpp] A paid response exceeded mpp.replay_max_bytes and was not snapshotted for idempotent replay; a lost-response retry will take a fresh challenge.');
+            Log::warning('[mpp] A paid response was larger than mpp.replay_max_bytes, so the package did not snapshot it for an idempotent replay. A retry after a lost response takes a fresh challenge.');
 
             return null;
         }
@@ -442,7 +442,7 @@ class PaymentGate
             'type' => 'https://paymentauth.org/problems/settlement-in-progress',
             'title' => 'Settlement In Progress',
             'status' => Response::HTTP_CONFLICT,
-            'detail' => 'A payment for this challenge is already being settled. Retry the same request shortly; do not submit a new payment.',
+            'detail' => 'A payment for this challenge is already settling. Retry the same request shortly. Do not send a new payment.',
             'challengeId' => $challengeId,
         ], Response::HTTP_CONFLICT)->header('Retry-After', '2');
     }
