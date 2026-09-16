@@ -53,24 +53,15 @@ final class OperationInfo
         return new self;
     }
 
+    /**
+     * The attribute declares the same eleven fields under the same names, and
+     * `fromArray()` already coerces each of them, so the mapping is the
+     * property list itself. Enumerating it again would assert a correspondence
+     * nothing checks, and a renamed attribute field would go quietly unread.
+     */
     public static function fromAttribute(DiscoveryInfo $attribute): self
     {
-        return new self(
-            summary: $attribute->summary,
-            description: $attribute->description,
-            priceNote: $attribute->priceNote,
-            tags: $attribute->tags,
-            operationId: $attribute->operationId,
-            request: $attribute->request,
-            response: $attribute->response,
-            parameters: $attribute->parameters,
-            query: $attribute->query,
-            // The attribute's booleans default to false rather than null, so an
-            // unset flag must not out-rank a `true` from a lower-precedence
-            // source: only a true is carried up.
-            deprecated: $attribute->deprecated ?: null,
-            hidden: $attribute->hidden ?: null,
-        );
+        return self::fromArray(get_object_vars($attribute));
     }
 
     /**
@@ -126,6 +117,31 @@ final class OperationInfo
             query: $this->query !== [] ? $this->query : $fallback->query,
             deprecated: $this->deprecated ?? $fallback->deprecated,
             hidden: $this->hidden ?? $fallback->hidden,
+        );
+    }
+
+    /**
+     * The same value with a different `operationId` — the one case where the
+     * document settles a field the sources did not: a route serving several
+     * OpenAPI paths cannot give them all one id, which OpenAPI requires to be
+     * unique. Returning a settled value object keeps a single answer to "what
+     * is this operation's id" in flight, rather than passing the corrected one
+     * alongside the stale one.
+     */
+    public function withOperationId(?string $operationId): self
+    {
+        return new self(
+            summary: $this->summary,
+            description: $this->description,
+            priceNote: $this->priceNote,
+            tags: $this->tags,
+            operationId: $operationId,
+            request: $this->request,
+            response: $this->response,
+            parameters: $this->parameters,
+            query: $this->query,
+            deprecated: $this->deprecated,
+            hidden: $this->hidden,
         );
     }
 

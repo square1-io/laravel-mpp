@@ -62,8 +62,20 @@ class DiscoveryDocument
     public function toArray(): array
     {
         $paths = [];
+        $included = (array) config('mpp.discovery.include', []);
 
         foreach ($this->router->getRoutes() as $route) {
+            // Cheapest question first, and asked of every route in the
+            // application: is this one listed at all? Describing a route means
+            // reflecting over its action, instantiating its attributes and
+            // autoloading every class it type-hints, and in an app of any size
+            // almost every route is about to be discarded.
+            $info = $this->paymentInfoFor($route);
+
+            if ($info === null && ! $this->included($route, $included)) {
+                continue;
+            }
+
             $meta = $this->operations->for($route);
 
             if ($meta->hidden === true) {
@@ -73,10 +85,8 @@ class DiscoveryDocument
                 continue;
             }
 
-            $info = $this->paymentInfoFor($route, $meta);
-
-            if ($info === null && ! $this->included($route)) {
-                continue;
+            if ($info !== null) {
+                $info = $this->annotate($info, $meta);
             }
 
             $variants = $this->pathVariants($route, $meta);
@@ -84,20 +94,24 @@ class DiscoveryDocument
             // One route serving several paths (an optional parameter is really
             // two operations) cannot reuse one operationId, which OpenAPI
             // requires to be unique across the document.
-            $operationId = count($variants) > 1 ? null : $meta->operationId;
+            if (count($variants) > 1) {
+                $meta = $meta->withOperationId(null);
+            }
+
+            // Both are fixed for the route, and `operation()` below is called
+            // once per path variant per verb.
+            $body = $this->schemas->requestBody($meta->request);
+            $responses = $this->schemas->responses($meta->response);
 
             foreach ($variants as $path => $parameters) {
-                foreach ($route->methods() as $httpMethod) {
-                    if (in_array($httpMethod, ['HEAD', 'OPTIONS'], true)) {
-                        continue;
-                    }
-
+                foreach (RouteKeys::verbs($route) as $httpMethod) {
                     $paths[$path][strtolower($httpMethod)] = $this->operation(
                         $info,
                         $meta,
                         $parameters,
                         $httpMethod,
-                        $operationId,
+                        $body,
+                        $responses,
                     );
                 }
             }
@@ -126,12 +140,14 @@ class DiscoveryDocument
      *
      * @param  array{offers: non-empty-list<array<string, mixed>>}|null  $info
      * @param  list<array<string, mixed>>  $parameters
+     * @param  array<string, mixed>|null  $body
+     * @param  array<string, array<string, mixed>>  $responses
      * @return array<string, mixed>
      */
-    private function operation(?array $info, OperationInfo $meta, array $parameters, string $httpMethod, ?string $operationId): array
+    private function operation(?array $info, OperationInfo $meta, array $parameters, string $httpMethod, ?array $body, array $responses): array
     {
         $operation = array_filter([
-            'operationId' => $operationId,
+            'operationId' => $meta->operationId,
             'summary' => $meta->summary,
             'description' => $meta->description,
             'tags' => $meta->tags,
@@ -151,13 +167,11 @@ class DiscoveryDocument
             $operation['parameters'] = $parameters;
         }
 
-        $body = $this->schemas->requestBody($meta->request);
-
         if ($body !== null) {
             // A stated body on a GET is unusual but legal, and a site owner who
             // wrote one meant it.
             $operation['requestBody'] = $body;
-        } elseif ($info !== null && in_array($httpMethod, ['POST', 'PUT', 'PATCH'], true)) {
+        } elseif ($info !== null && RouteKeys::carriesBody($httpMethod)) {
             // Discovery consumers expect a body-carrying PAYABLE operation to
             // declare a requestBody, so a permissive JSON object stands in when
             // the body is app-defined and undeclared. A free route gets no such
@@ -165,8 +179,6 @@ class DiscoveryDocument
             // say it anyway does not apply.
             $operation['requestBody'] = ['content' => ['application/json' => ['schema' => ['type' => 'object']]]];
         }
-
-        $responses = $this->schemas->responses($meta->response);
 
         if ($responses === []) {
             // Only when the operation described no response at all. A route that
@@ -198,14 +210,12 @@ class DiscoveryDocument
      * Empty by default, and deliberately opt-in per route: a broad pattern
      * publishes your route table to an unauthenticated endpoint that registries
      * crawl, which is a decision about disclosure rather than a convenience.
+     *
+     * @param  list<string>  $patterns
      */
-    private function included(Route $route): bool
+    private function included(Route $route, array $patterns): bool
     {
-        $patterns = (array) config('mpp.discovery.include', []);
-
-        if ($patterns === [] || $route->getName() === 'mpp.discovery') {
-            // The document never lists itself. `x-service-info.docs.apiReference`
-            // is where a document points at where it lives.
+        if ($patterns === []) {
             return false;
         }
 
@@ -368,7 +378,7 @@ class DiscoveryDocument
     /**
      * @return array{offers: non-empty-list<array<string, mixed>>}|null null when the route is not payment-gated
      */
-    private function paymentInfoFor(Route $route, OperationInfo $meta): ?array
+    private function paymentInfoFor(Route $route): ?array
     {
         $args = $this->middlewareArgs($route);
 
@@ -392,10 +402,38 @@ class DiscoveryDocument
 
         $offers = [];
         foreach ($methods as $method) {
-            $offers[] = $this->offer($method, $amount, $currency, $meta->priceNoteFor($method));
+            $offers[] = $this->offer($method, $amount, $currency);
         }
 
         return $offers === [] ? null : ['offers' => $offers];
+    }
+
+    /**
+     * Fold the route's price notes into its offers.
+     *
+     * A note is documentation, so it is applied here rather than inside
+     * `offer()`: pricing an offer and describing one are separate jobs, and the
+     * description then lands the same way whether the rail priced cleanly or
+     * failed to.
+     *
+     * @param  array{offers: non-empty-list<array<string, mixed>>}  $info
+     * @return array{offers: non-empty-list<array<string, mixed>>}
+     */
+    private function annotate(array $info, OperationInfo $meta): array
+    {
+        if ($meta->priceNote === null) {
+            return $info;
+        }
+
+        foreach ($info['offers'] as $i => $offer) {
+            $note = $meta->priceNoteFor((string) $offer['method']);
+
+            if ($note !== null) {
+                $info['offers'][$i]['description'] = $note;
+            }
+        }
+
+        return $info;
     }
 
     /**
@@ -513,7 +551,7 @@ class DiscoveryDocument
      *
      * @return array<string, mixed>
      */
-    private function offer(string $method, ?string $amount, string $currency, ?string $note): array
+    private function offer(string $method, ?string $amount, string $currency): array
     {
         $offer = ['method' => $method, 'intent' => 'charge'];
         $config = (array) config("mpp.methods.{$method}", []);
@@ -535,19 +573,13 @@ class DiscoveryDocument
             // only once someone calls the route, so say it here too.
             Log::warning("[mpp] Discovery could not derive the '{$method}' offer: ".$e->getMessage());
 
-            $offer['amount'] = null;
-
-            return $note === null ? $offer : $offer + ['description' => $note];
+            return $offer + ['amount' => null];
         }
 
         // The rail's own conversion is authoritative for a stated price; an
         // unstated one stays null however the probe converted.
         $offer['amount'] = $amount === null ? null : (string) $request['amount'];
         $offer['currency'] = (string) $request['currency'];
-
-        if ($note !== null) {
-            $offer['description'] = $note;
-        }
 
         return $offer;
     }

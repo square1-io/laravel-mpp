@@ -29,24 +29,14 @@ use Square1\Mpp\Attributes\DiscoveryInfo;
  */
 final class OperationInfoResolver
 {
-    /** @var array<string, OperationInfo> */
-    private array $cache = [];
-
     public function for(Route $route): OperationInfo
-    {
-        $key = spl_object_hash($route);
-
-        return $this->cache[$key] ??= $this->resolve($route);
-    }
-
-    private function resolve(Route $route): OperationInfo
     {
         $attribute = RouteAction::attribute($route, DiscoveryInfo::class);
 
         $stated = OperationInfo::fromArray((array) ($route->getAction('mpp_discovery') ?? []))
-            ->mergeUnder($attribute instanceof DiscoveryInfo
-                ? OperationInfo::fromAttribute($attribute)
-                : OperationInfo::empty())
+            ->mergeUnder($attribute === null
+                ? OperationInfo::empty()
+                : OperationInfo::fromAttribute($attribute))
             ->mergeUnder($this->fromConfig($route));
 
         return $stated->mergeUnder($this->derived($route));
@@ -104,7 +94,7 @@ final class OperationInfoResolver
 
     private function carriesBody(Route $route): bool
     {
-        return array_intersect($route->methods(), ['POST', 'PUT', 'PATCH']) !== [];
+        return array_filter(RouteKeys::verbs($route), RouteKeys::carriesBody(...)) !== [];
     }
 
     /**
@@ -121,9 +111,7 @@ final class OperationInfoResolver
             return null;
         }
 
-        $verbs = array_diff($route->methods(), ['HEAD', 'OPTIONS']);
-
-        return count($verbs) > 1 ? null : $name;
+        return count(RouteKeys::verbs($route)) > 1 ? null : $name;
     }
 
     /**

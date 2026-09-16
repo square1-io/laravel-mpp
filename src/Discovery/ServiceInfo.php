@@ -16,6 +16,15 @@ namespace Square1\Mpp\Discovery;
 final class ServiceInfo
 {
     /**
+     * Settled once per document: `servers()` is read for the document's own
+     * `servers` key and again as the base every relative documentation link is
+     * resolved against.
+     *
+     * @var list<array<string, mixed>>|null
+     */
+    private ?array $servers = null;
+
+    /**
      * The OpenAPI `info` object. `title` and `version` are required by the
      * draft and always present; the rest appear only when stated.
      *
@@ -53,12 +62,16 @@ final class ServiceInfo
      */
     public function servers(): array
     {
+        if ($this->servers !== null) {
+            return $this->servers;
+        }
+
         $stated = config('mpp.discovery.servers');
 
         if ($stated === null || $stated === [] || $stated === '') {
             $url = config('app.url');
 
-            return is_string($url) && $url !== ''
+            return $this->servers = is_string($url) && $url !== ''
                 ? [['url' => rtrim($url, '/')]]
                 : [];
         }
@@ -77,7 +90,7 @@ final class ServiceInfo
             }
         }
 
-        return $servers;
+        return $this->servers = $servers;
     }
 
     /**

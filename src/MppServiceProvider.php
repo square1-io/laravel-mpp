@@ -6,7 +6,6 @@ use Illuminate\Contracts\Cache\Factory as CacheFactory;
 use Illuminate\Http\Client\Factory;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Routing\Route;
-use Illuminate\Routing\Route as RoutingRoute;
 use Illuminate\Routing\Router;
 use Illuminate\Support\ServiceProvider;
 use Square1\Mpp\Discovery\DiscoveryDocument;
@@ -157,7 +156,13 @@ class MppServiceProvider extends ServiceProvider
         if (config('mpp.discovery.enabled', true)) {
             $router->get('/openapi.json', fn () => $this->discoveryResponse())
                 ->name('mpp.discovery')
-                ->middleware(EnforceHttps::class);
+                ->middleware(EnforceHttps::class)
+                // The document does not list itself. Said here, with the route,
+                // rather than as a name the generator remembers to skip:
+                // `hidden` is the mechanism that already exists for exactly
+                // this, and `x-service-info.docs.apiReference` is where a
+                // document points at where it lives.
+                ->mppDiscovery(hidden: true);
         }
 
         // Opt-in: auto-enforce #[RequiresPayment] on the configured route groups.
@@ -224,23 +229,26 @@ class MppServiceProvider extends ServiceProvider
             string|array|null $response = null,
             array $parameters = [],
             array $query = [],
-            bool $deprecated = false,
-            bool $hidden = false,
+            ?bool $deprecated = null,
+            ?bool $hidden = null,
         ) {
             /** @var Route $this */
+            // Only what was actually passed is stored: an argument left at its
+            // default said nothing, and something the route said nothing about
+            // must not out-rank what the action or config did say.
             $this->action['mpp_discovery'] = array_filter(compact(
                 'summary', 'description', 'priceNote', 'tags', 'operationId',
                 'request', 'response', 'parameters', 'query', 'deprecated', 'hidden',
-            ), fn (mixed $value) => $value !== null && $value !== [] && $value !== false);
+            ), fn (mixed $value) => $value !== null && $value !== []);
 
             return $this;
         };
 
-        if (! RoutingRoute::hasMacro('discovery')) {
-            RoutingRoute::macro('discovery', $macro);
+        if (! Route::hasMacro('discovery')) {
+            Route::macro('discovery', $macro);
         }
 
-        RoutingRoute::macro('mppDiscovery', $macro);
+        Route::macro('mppDiscovery', $macro);
     }
 
     /**

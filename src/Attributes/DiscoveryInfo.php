@@ -54,8 +54,8 @@ final class DiscoveryInfo
      *                                                                  full OpenAPI parameter array to merge
      * @param  array<string, string|array<string, mixed>>  $query  query parameter name => description, or a full
      *                                                             OpenAPI parameter array
-     * @param  bool  $deprecated  marks the operation deprecated in the document
-     * @param  bool  $hidden  keeps the route out of the document entirely; it stays payable
+     * @param  bool|null  $deprecated  marks the operation deprecated in the document
+     * @param  bool|null  $hidden  keeps the route out of the document entirely; it stays payable
      */
     public function __construct(
         public readonly ?string $summary = null,
@@ -67,7 +67,11 @@ final class DiscoveryInfo
         public readonly string|array|null $response = null,
         public readonly array $parameters = [],
         public readonly array $query = [],
-        public readonly bool $deprecated = false,
-        public readonly bool $hidden = false,
+        // Nullable, like every other field here, so that null means "said
+        // nothing" and `false` can say something: `#[DiscoveryInfo(hidden:
+        // false)]` overrides a `hidden: true` in config, which is what the
+        // nearest-to-the-route-wins rule promises for the other nine fields.
+        public readonly ?bool $deprecated = null,
+        public readonly ?bool $hidden = null,
     ) {}
 }

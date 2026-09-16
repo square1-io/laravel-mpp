@@ -82,9 +82,9 @@ final class ValidationSchema
             self::plant($tree, explode('.', $field), self::normalise($fieldRules));
         }
 
-        $schema = self::compile($tree);
+        $body = self::compile($tree);
 
-        return ($schema['properties'] ?? []) === [] ? null : $schema;
+        return $body['properties'] === [] ? null : ['type' => 'object'] + $body;
     }
 
     /**
@@ -168,7 +168,7 @@ final class ValidationSchema
             }
         }
 
-        $schema = ['type' => 'object', 'properties' => $properties];
+        $schema = ['properties' => $properties];
 
         if ($required !== []) {
             $schema['required'] = $required;
@@ -189,7 +189,7 @@ final class ValidationSchema
 
         // The children decide the type when the rules do not: a `*` child is an
         // array's items, any other child a property of an object.
-        $type = self::type($rules) ?? match (true) {
+        $type = self::lookup($rules, self::TYPES) ?? match (true) {
             $items !== null => 'array',
             $children !== [] => 'object',
             default => null,
@@ -201,7 +201,7 @@ final class ValidationSchema
             $schema['type'] = [$type, 'null'];
         }
 
-        if (($format = self::format($rules)) !== null) {
+        if (($format = self::lookup($rules, self::FORMATS)) !== null) {
             $schema['format'] = $format;
         }
 
@@ -222,16 +222,7 @@ final class ValidationSchema
         $nested = array_filter($children, fn (string $key) => $key !== '*', ARRAY_FILTER_USE_KEY);
 
         if ($nested !== []) {
-            $compiled = self::compile($nested);
-
-            // compile() re-states the type; the node's own reading of it wins,
-            // so a `nullable` object keeps its null branch.
-            $schema['type'] ??= 'object';
-            $schema['properties'] = $compiled['properties'];
-
-            if (isset($compiled['required'])) {
-                $schema['required'] = $compiled['required'];
-            }
+            $schema += self::compile($nested);
         }
 
         return $schema;
@@ -263,31 +254,22 @@ final class ValidationSchema
     }
 
     /**
+     * The first rule that appears in one of the tables above wins. That
+     * precedence is load-bearing rather than incidental: `date` types a field
+     * `string` and formats it `date-time`, and a rule set naming two types is
+     * already contradictory, so the first is as good an answer as any and a
+     * stable one.
+     *
      * @param  list<string>  $rules
+     * @param  array<string, string>  $table
      */
-    private static function type(array $rules): ?string
+    private static function lookup(array $rules, array $table): ?string
     {
         foreach ($rules as $rule) {
             $name = self::name($rule);
 
-            if (isset(self::TYPES[$name])) {
-                return self::TYPES[$name];
-            }
-        }
-
-        return null;
-    }
-
-    /**
-     * @param  list<string>  $rules
-     */
-    private static function format(array $rules): ?string
-    {
-        foreach ($rules as $rule) {
-            $name = self::name($rule);
-
-            if (isset(self::FORMATS[$name])) {
-                return self::FORMATS[$name];
+            if (isset($table[$name])) {
+                return $table[$name];
             }
         }
 

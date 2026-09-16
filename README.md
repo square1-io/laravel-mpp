@@ -512,7 +512,7 @@ In config, for routes you did not define and cannot annotate. Key by route name 
 
 The three merge field by field, nearest to the route winning: route, then action, then config. A summary in config survives a route macro that sets only a price note.
 
-`#[DiscoveryInfo]` and `->discovery()` take: `summary`, `description`, `priceNote`, `tags`, `operationId`, `request`, `response`, `parameters`, `query`, `deprecated`, `hidden`. `priceNote` becomes each offer's `description` — pass a string for one note across every rail, or a map keyed by method name to describe each rail in its own words. `hidden: true` keeps a route out of the document without making it free.
+`#[DiscoveryInfo]` and `->discovery()` take: `summary`, `description`, `priceNote`, `tags`, `operationId`, `request`, `response`, `parameters`, `query`, `deprecated`, `hidden`. `priceNote` becomes each offer's `description` — pass a string for one note across every rail, or a map keyed by method name to describe each rail in its own words. `hidden: true` keeps a route out of the document without making it free. Every field is unset until you state it, `deprecated` and `hidden` included, so `hidden: false` nearer the route overrides a `hidden: true` further from it.
 
 ### Input and Output Schemas
 

@@ -23,6 +23,33 @@ use Illuminate\Routing\Route;
 final class RouteKeys
 {
     /**
+     * The verbs a route is documented for.
+     *
+     * `HEAD` and `OPTIONS` are Laravel's and the HTTP stack's, not the
+     * application's, and they are excluded in three places that must agree:
+     * which operations the document emits, which `"VERB /uri"` config keys can
+     * match one, and whether a route's name is unique enough to be its
+     * `operationId`. Disagreement there is a config key that silently stops
+     * matching, or a duplicate `operationId`, which OpenAPI forbids.
+     *
+     * @return list<string>
+     */
+    public static function verbs(Route $route): array
+    {
+        return array_values(array_diff($route->methods(), ['HEAD', 'OPTIONS']));
+    }
+
+    /**
+     * Whether a verb carries a request body — the one question behind both
+     * "do this action's FormRequest rules describe the body" and "does this
+     * operation get the permissive placeholder body".
+     */
+    public static function carriesBody(string $verb): bool
+    {
+        return in_array(strtoupper($verb), ['POST', 'PUT', 'PATCH'], true);
+    }
+
+    /**
      * @return list<string> most specific first
      */
     public static function for(Route $route): array
@@ -34,10 +61,8 @@ final class RouteKeys
             $keys[] = $name;
         }
 
-        foreach ($route->methods() as $verb) {
-            if (! in_array($verb, ['HEAD', 'OPTIONS'], true)) {
-                $keys[] = strtoupper($verb).' '.$uri;
-            }
+        foreach (self::verbs($route) as $verb) {
+            $keys[] = strtoupper($verb).' '.$uri;
         }
 
         $keys[] = $uri;

@@ -470,3 +470,17 @@ it('keeps a hidden free route unlisted', function () {
     expect($this->get('/openapi.json')->json('paths'))
         ->not->toHaveKey('/free/redirect/{slug}');
 });
+
+it('lets a route say false where a lower-precedence source said true', function () {
+    // `hidden` and `deprecated` are nullable like every other field, so "said
+    // nothing" and "said no" are different answers and the nearest-to-the-route
+    // rule holds for them too.
+    config()->set('mpp.discovery.include', ['free/*']);
+    config()->set('mpp.discovery.operations', ['free.redirect' => ['hidden' => true]]);
+
+    app('router')->getRoutes()->getByName('free.redirect')->action['mpp_discovery'] = [
+        'hidden' => false,
+    ];
+
+    expect($this->get('/openapi.json')->json('paths'))->toHaveKey('/free/redirect/{slug}');
+});

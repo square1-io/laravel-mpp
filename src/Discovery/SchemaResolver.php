@@ -2,6 +2,7 @@
 
 namespace Square1\Mpp\Discovery;
 
+use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Support\Facades\Log;
 
 /**
@@ -16,7 +17,8 @@ use Illuminate\Support\Facades\Log;
  *   - a full OpenAPI `requestBody` / response array, for anything the shorthand
  *     cannot express (several media types, `$ref`, examples);
  *   - a class name — a `FormRequest`, whose `rules()` already describe the
- *     input, or any class with a `schema()` method returning an array.
+ *     input, or any class of your own with a `schema()` method returning an
+ *     array.
  *
  * A schema that cannot be resolved is logged and left out. The document stays
  * advisory: a broken schema reference must cost the operation its schema, not
@@ -24,6 +26,17 @@ use Illuminate\Support\Facades\Log;
  */
 final class SchemaResolver
 {
+    /**
+     * Schemas already derived this document, by class name. One FormRequest is
+     * commonly shared by several routes, and one route is several operations
+     * once its verbs and optional-parameter path variants are counted — without
+     * this, each of them re-instantiates the class and re-parses its rule set
+     * to arrive at the same answer.
+     *
+     * @var array<class-string, array<string, mixed>|null>
+     */
+    private array $derived = [];
+
     /**
      * The `requestBody` for an operation, or null when nothing described one.
      *
@@ -151,6 +164,10 @@ final class SchemaResolver
             return null;
         }
 
+        if (array_key_exists($stated, $this->derived)) {
+            return $this->derived[$stated];
+        }
+
         try {
             $schema = $this->fromClass($stated);
         } catch (\Throwable $e) {
@@ -159,10 +176,10 @@ final class SchemaResolver
             // else, and the log says which class to look at.
             Log::warning("[mpp] Discovery could not derive the {$noun} schema from '{$stated}': ".$e->getMessage());
 
-            return null;
+            return $this->derived[$stated] = null;
         }
 
-        return $schema === [] ? null : $schema;
+        return $this->derived[$stated] = ($schema === [] ? null : $schema);
     }
 
     /**
@@ -183,17 +200,15 @@ final class SchemaResolver
             return is_array($schema) ? $schema : null;
         }
 
-        if (method_exists($instance, 'rules')) {
+        // Narrowed to a FormRequest rather than anything with a `rules()`
+        // method: `rules()` is a common enough name that reading it off a
+        // policy or a value object would publish something that was never a
+        // request shape. A class of your own says so with `schema()`.
+        if ($instance instanceof FormRequest) {
             return ValidationSchema::fromRules((array) $instance->rules());
         }
 
-        if (method_exists($instance, '__invoke')) {
-            $schema = $instance();
-
-            return is_array($schema) ? $schema : null;
-        }
-
-        Log::warning("[mpp] Discovery could not read a schema from '{$class}': it has no schema(), rules() or __invoke().");
+        Log::warning("[mpp] Discovery could not read a schema from '{$class}': it is not a FormRequest and has no schema() method.");
 
         return null;
     }
