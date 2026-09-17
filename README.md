@@ -428,12 +428,21 @@ The server filters and ranks its offered challenges by the header. The q values,
 
 ### Validating Conformance
 
-Point the reference validator at your application. It tests discovery, the challenge format, and the error handling. On the testnet, with a wallet that it funds automatically, it can also run an on-chain tempo settlement:
+Point the reference validator at your application. The validator tests discovery, challenge format and error handling. On testnet, the validator can fund a wallet and run a Tempo settlement:
 
 ```bash
-npx mppx@latest validate https://your-host --endpoint GET:/resource --yes
+npx mppx@latest validate https://your-host
 ```
 
+Give each path parameter a working `example`. The validator uses the value to replace the placeholder:
+
+```php
+#[DiscoveryInfo(parameters: [
+    'id' => ['example' => 1],
+])]
+```
+
+Use `--endpoint GET:/resource` to test one concrete operation without discovery. Add `--yes` only when you want the validator to approve a mainnet payment.
 
 ## Discovery
 
@@ -465,7 +474,7 @@ MPP_DISCOVERY_LLMS=https://example.com/llms.txt
 
 `servers` follows `APP_URL` until you set `mpp.discovery.servers`. Set it when another host serves the API, or when a path prefix does. The contact and licence details are in `config/mpp.php`. The package omits an empty value, and does not publish it blank.
 
-Write a documentation link as a full URL or as a relative one, such as `/llms.txt`. The package resolves a relative link against your service URL, and publishes an absolute link either way. A link that starts with a slash resolves against the host, so it drops any path that your `servers` URL carries.
+Write a documentation link as a full URL or as a relative one, such as `/llms.txt`. The package resolves a relative link against your service URL, and publishes an absolute link either way. A link that starts with a slash resolves against the host, so it drops any path that your `servers` URL carries. An `llms` link only states where the file is. Your application must serve a text file at that URL. The file must not be empty. The package does not create the file.
 
 The two response headers that the draft recommends are on by default. They are `Cache-Control: public, max-age=300` and `Access-Control-Allow-Origin: *`. Set `mpp.discovery.cache_control` or `mpp.discovery.allow_origin` to `null` to omit either one.
 
