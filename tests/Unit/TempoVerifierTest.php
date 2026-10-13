@@ -157,8 +157,10 @@ it('fails closed on a wrong token', function () {
 it('fails closed when the transfer memo does not match the challenge memo', function () {
     // The transfer carries the captured memo, but the challenge advertised a
     // different one — a transfer minted for another challenge cannot settle here.
+    // The captured memo is also a valid attribution memo for this challenge, so
+    // attribution is switched off to isolate the exact-match path.
     $rpc = new FakeRpcClient(FakeRpcClient::successReceipt(PATH_USD, RECIPIENT, '10000', CAPTURED_TX_HASH));
-    $result = tempoVerifier($rpc)->verifyTempo(
+    $result = tempoVerifier($rpc, ['accept_attribution_memo' => false])->verifyTempo(
         capturedCredential(),
         tempoState(['memo' => '0x'.str_repeat('11', 32)]),
     );
@@ -168,11 +170,40 @@ it('fails closed when the transfer memo does not match the challenge memo', func
         ->and($rpc->broadcasts)->toBeEmpty();
 });
 
-it('fails closed when the challenge advertised no memo', function () {
+it('fails closed when the challenge advertised no memo and attribution is off', function () {
     // A challenge with no advertised memo cannot accept any transfer: there is
     // nothing to bind the on-chain payment to.
     $rpc = new FakeRpcClient(FakeRpcClient::successReceipt(PATH_USD, RECIPIENT, '10000', CAPTURED_TX_HASH));
-    $result = tempoVerifier($rpc)->verifyTempo(capturedCredential(), tempoState(['memo' => '']));
+    $result = tempoVerifier($rpc, ['accept_attribution_memo' => false])->verifyTempo(capturedCredential(), tempoState(['memo' => '']));
+
+    expect($result->succeeded)->toBeFalse()
+        ->and($result->failureReason)->toContain('memo does not match')
+        ->and($rpc->broadcasts)->toBeEmpty();
+});
+
+it('settles an mppx attribution memo in place of the advertised memo', function (string $advertised) {
+    // mppx 0.11.0 and later ignore methodDetails.memo and send an attribution
+    // memo bound to the challenge id and realm. The captured memo is one.
+    $rpc = new FakeRpcClient(FakeRpcClient::successReceipt(PATH_USD, RECIPIENT, '10000', CAPTURED_TX_HASH));
+    $rpc->forcedHash = CAPTURED_TX_HASH;
+
+    $result = tempoVerifier($rpc)->verifyTempo(capturedCredential(), tempoState(['memo' => $advertised]));
+
+    expect($result->succeeded)->toBeTrue()
+        ->and($result->settlementRef)->toBe(CAPTURED_TX_HASH);
+})->with([
+    'a different advertised memo' => '0x'.str_repeat('11', 32),
+    'no advertised memo' => '',
+]);
+
+it('fails closed on an attribution memo bound to another challenge', function () {
+    // AttributionMemoTest covers the other fields; this checks the verifier
+    // does not settle when the attribution memo does not match.
+    $rpc = new FakeRpcClient(FakeRpcClient::successReceipt(PATH_USD, RECIPIENT, '10000', CAPTURED_TX_HASH));
+    $result = tempoVerifier($rpc)->verifyTempo(
+        capturedCredential(),
+        tempoState(['id' => 'some-other-challenge-id', 'memo' => '0x'.str_repeat('11', 32)]),
+    );
 
     expect($result->succeeded)->toBeFalse()
         ->and($result->failureReason)->toContain('memo does not match')

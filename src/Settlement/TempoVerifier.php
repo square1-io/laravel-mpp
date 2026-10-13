@@ -3,9 +3,11 @@
 namespace Square1\Mpp\Settlement;
 
 use Carbon\CarbonImmutable;
+use Illuminate\Support\Facades\Log;
 use InvalidArgumentException;
 use Square1\Mpp\Protocol\Challenge;
 use Square1\Mpp\Protocol\Credential;
+use Square1\Mpp\Protocol\Tempo\AttributionMemo;
 use Square1\Mpp\Protocol\Tempo\ParsedTempoCredential;
 use Square1\Mpp\Protocol\Tempo\TempoChallengeState;
 use Square1\Mpp\Support\Base64Url;
@@ -29,7 +31,8 @@ use Throwable;
  *       recipient.
  *   (c) It checks that the transfer carries the exact memo that THIS challenge
  *       advertised, so that a transaction for one challenge cannot satisfy
- *       another challenge.
+ *       another challenge. When `accept_attribution_memo` is on, it also
+ *       accepts the mppx attribution memo for this challenge and this realm.
  *   (d) It broadcasts the transaction and confirms that the transaction mined
  *       with status 0x1, to the required confirmation depth. It delegates this
  *       step to the {@see SettlementChecker}.
@@ -152,18 +155,15 @@ class TempoVerifier implements Verifier
             return SettlementResult::failure('No transfer call paying the challenged amount of the challenged token to the challenged recipient was found.');
         }
 
-        // (c) The transfer must carry the exact memo that this challenge
-        // advertised. The memo is a random value per challenge, and the
-        // challenge id HMAC binds it. An exact match therefore binds the
-        // on-chain payment to this one challenge. A transfer that the server
-        // minted for a different challenge carries a different memo, and it
-        // cannot settle here.
+        // (c) The transfer must carry a memo that binds it to this challenge.
+        // A transfer that a client minted for a different challenge carries a
+        // different memo, and it cannot settle here.
         $memo = $transfer['memo'];
         if ($memo === null) {
             return SettlementResult::failure('Transfer is missing the challenge-bound memo.');
         }
 
-        if ($state->memo === '' || ! hash_equals($this->normalizeMemo($state->memo), $this->normalizeMemo($memo))) {
+        if (! $this->memoMatches($memo, $state)) {
             return SettlementResult::failure('Transfer memo does not match the challenge memo.');
         }
 
@@ -240,6 +240,32 @@ class TempoVerifier implements Verifier
         }
 
         return null;
+    }
+
+    /**
+     * Returns true when the transfer memo is the memo that the challenge
+     * advertised or, unless `accept_attribution_memo` is off, the mppx
+     * attribution memo for this challenge (see AttributionMemo).
+     */
+    private function memoMatches(string $memo, TempoChallengeState $state): bool
+    {
+        $memo = $this->normalizeMemo($memo);
+
+        if ($state->memo !== '' && hash_equals($this->normalizeMemo($state->memo), $memo)) {
+            return true;
+        }
+
+        if (! ($this->methodConfig['accept_attribution_memo'] ?? true)
+            || ! AttributionMemo::matches($memo, $state->id, $state->realm)) {
+            return false;
+        }
+
+        Log::debug('[mpp] A Tempo transfer matched the mppx attribution memo, not the advertised memo.', [
+            'challenge_id' => $state->id,
+            'realm' => $state->realm,
+        ]);
+
+        return true;
     }
 
     /**
