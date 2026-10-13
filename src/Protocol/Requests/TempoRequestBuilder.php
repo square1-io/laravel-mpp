@@ -55,7 +55,8 @@ class TempoRequestBuilder implements RailRequestBuilder
                 // it and no one can change it. The paid retry must present a
                 // transfer whose memo equals this value. That binds the on-chain
                 // payment to this one challenge, and the client needs no special
-                // logic to derive a memo.
+                // logic to derive a memo. mppx 0.11.0 and later ignore it: see
+                // AttributionMemo.
                 'memo' => '0x'.bin2hex(random_bytes(32)),
             ],
         ];

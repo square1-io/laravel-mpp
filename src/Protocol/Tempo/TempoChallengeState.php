@@ -19,7 +19,8 @@ use Carbon\CarbonImmutable;
  *     challenge has not expired. The server looks the id up in the store and
  *     checks the expiry.
  *   - the signed transaction pays exactly this amount of this token to this
- *     recipient, and carries the exact memo that this challenge advertised.
+ *     recipient, and carries the exact memo that this challenge advertised,
+ *     or the mppx attribution memo for this challenge (see AttributionMemo).
  *
  * The challenge binding therefore stays significant. A transaction that a client
  * minted for one challenge cannot settle another challenge. A challenge that has

@@ -488,6 +488,11 @@ return [
             // serves the resource.
             'confirmations' => (int) env('TEMPO_MIN_CONFIRMATIONS', 1),
 
+            // Also accept the mppx attribution memo, which mppx 0.11.0 and later
+            // send in place of the advertised memo. Turn this off for strict
+            // draft-tempo-charge-00 behaviour, which rejects those clients.
+            'accept_attribution_memo' => (bool) env('TEMPO_ACCEPT_ATTRIBUTION_MEMO', true),
+
             // Receipt polling: how long the package waits for the network to mine
             // the transaction that it broadcast.
             'poll_attempts' => (int) env('TEMPO_POLL_ATTEMPTS', 40),

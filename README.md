@@ -307,6 +307,20 @@ Pay it with `mppx`:
 npx mppx https://your-host/paid --network testnet --account <your-account>
 ```
 
+#### The Transfer Memo
+
+Each Tempo challenge advertises a random memo in `methodDetails.memo`. [draft-tempo-charge-00](https://paymentauth.org/draft-tempo-charge-00) requires the client to pay with `transferWithMemo` and that exact memo. The memo binds the on-chain transfer to one challenge.
+
+From 0.11.0 onwards, `mppx` ignores the advertised memo. It sends its own attribution memo instead, which it derives from the challenge id and the realm. That memo also binds the transfer to one challenge, so the package accepts either form by default. Without this, every payment from a current `mppx` fails with "Transfer memo does not match the challenge memo."
+
+To accept only the advertised memo, as the draft requires, turn the attribution form off. Doing so locks out `mppx` 0.11.0 and later:
+
+```dotenv
+TEMPO_ACCEPT_ATTRIBUTION_MEMO=false
+```
+
+The package logs at debug level each time a payment settles with an attribution memo.
+
 ### Testing Tempo End to End
 
 Use this flow to see a real Tempo testnet transfer arrive at a recipient address.

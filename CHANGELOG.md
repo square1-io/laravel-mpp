@@ -6,6 +6,23 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). The
 
 The public API is the config file, the middleware argument syntax, the `#[RequiresPayment]` and `#[DiscoveryInfo]` attributes, the `->discovery()` route macro, the `PaymentSpec` that your checks and resolvers receive, the `Verifier` and `SettlementChecker` interfaces, and `RequirePayment::handle()`. A service constructor that the container resolves is internal, and it can change in a minor release.
 
+## [2.4.0]
+
+### Fixed
+
+- **Tempo payments from mppx 0.11.0 and later no longer fail with "Transfer memo does not match the challenge memo."** Since 0.11.0, the mppx client ignores the `methodDetails.memo` that the challenge advertises. It always sends its own attribution memo, which carries an MPP tag, a fingerprint of the realm, and a nonce derived from the challenge id. `TempoVerifier` now accepts either the advertised memo or the attribution memo for the same challenge and realm. Both forms bind the transfer to one challenge. The new `Square1\Mpp\Protocol\Tempo\AttributionMemo` class matches the format, and the package logs at debug level each time a payment uses it.
+
+### Added
+
+- `mpp.methods.tempo.accept_attribution_memo`, which is `TEMPO_ACCEPT_ATTRIBUTION_MEMO` in the environment. It is on by default. Turn it off to accept only the advertised memo, which is what draft-tempo-charge-00 requires. Doing so locks out mppx clients from 0.11.0 onwards.
+
+## [2.3.1]
+
+### Changed
+
+- The README section on validating conformance now matches the current `mppx validate`. It runs against discovery by default, without `--endpoint` or `--yes`. The section explains how to give each path parameter an `example` that the validator substitutes, and when to use `--endpoint` and `--yes`.
+- The README now states that an `llms` discovery link only points at the file. Your application must serve a non-empty text file at that URL.
+
 ## [2.3.0]
 
 ### Added
